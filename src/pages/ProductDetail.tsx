@@ -62,18 +62,17 @@ export function ProductDetail() {
           </div>
 
           <div className="mt-8 flex flex-col gap-3">
-            <a
-              href={product.affiliateUrl}
-              target="_blank"
-              rel="sponsored noopener noreferrer"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-forest px-8 py-4 text-base font-semibold text-cream transition-all hover:bg-forest-soft hover:shadow-lg hover:shadow-forest/20"
+            {/* Botão desativado já que o link é fictício */}
+            <button
+              disabled
+              className="inline-flex w-full cursor-not-allowed items-center justify-center gap-2 rounded-full bg-sand px-8 py-4 text-base font-semibold text-stone/70"
             >
-              Ir para a loja oficial
+              Oferta em breve
               <ArrowUpRight className="size-5" />
-            </a>
+            </button>
             <p className="mt-2 flex items-center justify-center gap-2 text-xs text-stone">
               <ShieldCheck className="size-4" />
-              Compra segura. Você será redirecionado para o site do parceiro.
+              Em breve você poderá ser redirecionado para a loja parceira.
             </p>
           </div>
         </div>
