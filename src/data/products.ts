@@ -1,0 +1,96 @@
+import type { Category, Product } from "@/types/product";
+
+export const categories: Category[] = [
+  { id: "all", label: "Todas" },
+  { id: "tech", label: "Tecnologia" },
+  { id: "fashion", label: "Moda" },
+  { id: "fitness", label: "Fitness" },
+  { id: "home", label: "Casa & Lifestyle" },
+];
+
+const IMG = (id: string) =>
+  `https://images.unsplash.com/${id}?auto=format&fit=crop&w=900&q=80`;
+
+export const products: Product[] = [
+  {
+    id: "fone-anc",
+    name: "Fone Bluetooth ANC",
+    tagline: "Cancelamento ativo e 40h de bateria.",
+    image: IMG("photo-1505740420928-5e560c06d30e"),
+    price: 289,
+    originalPrice: 399,
+    category: "tech",
+    affiliateUrl: "https://exemplo.com/afiliado/fone-anc",
+    featured: true,
+  },
+  {
+    id: "relogio-min",
+    name: "Relógio Minimalista",
+    tagline: "Aço escovado, pulseira em couro legítimo.",
+    image: IMG("photo-1523275335684-37898b6baf30"),
+    price: 179,
+    originalPrice: 249,
+    category: "fashion",
+    affiliateUrl: "https://exemplo.com/afiliado/relogio-min",
+    featured: true,
+  },
+  {
+    id: "tenis-running",
+    name: "Tênis Running Pro",
+    tagline: "Amortecimento responsivo para longas distâncias.",
+    image: IMG("photo-1542291026-7eec264c27ff"),
+    price: 349,
+    originalPrice: 499,
+    category: "fitness",
+    affiliateUrl: "https://exemplo.com/afiliado/tenis-running",
+  },
+  {
+    id: "mochila-urbana",
+    name: "Mochila Urbana",
+    tagline: "Compartimento para notebook 15\" e bolso anti-furto.",
+    image: IMG("photo-1553062407-98eeb64c6a62"),
+    price: 219,
+    category: "home",
+    affiliateUrl: "https://exemplo.com/afiliado/mochila-urbana",
+  },
+  {
+    id: "camera-compacta",
+    name: "Câmera Compacta 4K",
+    tagline: "Sensor grande, vídeo 4K e estabilização óptica.",
+    image: IMG("photo-1526170375885-4d8ecf77b99f"),
+    price: 1899,
+    originalPrice: 2299,
+    category: "tech",
+    affiliateUrl: "https://exemplo.com/afiliado/camera-compacta",
+    featured: true,
+  },
+  {
+    id: "oculos-sol",
+    name: "Óculos de Sol Clássico",
+    tagline: "Proteção UV400 e armação leve em acetato.",
+    image: IMG("photo-1572635196237-14b3f281503f"),
+    price: 149,
+    originalPrice: 199,
+    category: "fashion",
+    affiliateUrl: "https://exemplo.com/afiliado/oculos-sol",
+  },
+  {
+    id: "garrafa-termica",
+    name: "Garrafa Térmica 1L",
+    tagline: "Mantém gelada por 24h. Aço inox 18/8.",
+    image: IMG("photo-1602143407151-7111542de6e8"),
+    price: 89,
+    category: "home",
+    affiliateUrl: "https://exemplo.com/afiliado/garrafa-termica",
+  },
+  {
+    id: "teclado-mec",
+    name: "Teclado Mecânico 75%",
+    tagline: "Switches hot-swap e conexão tri-mode.",
+    image: IMG("photo-1587829741301-dc798b83add3"),
+    price: 429,
+    originalPrice: 549,
+    category: "tech",
+    affiliateUrl: "https://exemplo.com/afiliado/teclado-mec",
+  },
+];
