@@ -59,16 +59,11 @@ export function ProductCard({ product, index = 0 }: Props) {
             </span>
           </div>
 
-          <a
-            href={product.affiliateUrl}
-            target="_blank"
-            rel="sponsored noopener noreferrer"
-            aria-label={`Ver oferta de ${product.name}`}
-            className="inline-flex items-center gap-1 rounded-full bg-forest px-3.5 py-2 text-xs font-semibold text-cream transition-all group-hover:bg-copper"
-          >
-            Ver oferta
+          {/* Botão desativado já que o link é fictício */}
+          <span className="inline-flex cursor-not-allowed items-center gap-1 rounded-full bg-sand px-3.5 py-2 text-xs font-semibold text-stone/70">
+            Em breve
             <ArrowUpRight className="size-3.5" />
-          </a>
+          </span>
         </div>
       </div>
     </article>
