@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { ArrowUpRight } from "lucide-react";
 import { cn, discountPercent, formatBRL } from "@/lib/utils";
 import type { Product } from "@/types/product";
@@ -15,10 +16,8 @@ export function ProductCard({ product, index = 0 }: Props) {
       className="animate-fade-up group relative flex flex-col overflow-hidden rounded-2xl border border-sand bg-white/60 transition-all duration-300 hover:-translate-y-1 hover:border-copper/40 hover:shadow-xl hover:shadow-forest/5"
       style={{ animationDelay: `${Math.min(index, 7) * 60}ms` }}
     >
-      <a
-        href={product.affiliateUrl}
-        target="_blank"
-        rel="sponsored noopener noreferrer"
+      <Link
+        to={`/produto/${product.id}`}
         className="relative block aspect-[4/5] overflow-hidden bg-sand"
       >
         <img
@@ -33,12 +32,14 @@ export function ProductCard({ product, index = 0 }: Props) {
             −{off}%
           </span>
         )}
-      </a>
+      </Link>
 
       <div className="flex flex-1 flex-col gap-1.5 p-5">
-        <h3 className="font-display text-lg leading-snug font-semibold text-forest">
-          {product.name}
-        </h3>
+        <Link to={`/produto/${product.id}`}>
+          <h3 className="font-display text-lg leading-snug font-semibold text-forest transition-colors group-hover:text-copper">
+            {product.name}
+          </h3>
+        </Link>
         <p className="line-clamp-2 text-sm text-stone">{product.tagline}</p>
 
         <div className="mt-3 flex items-end justify-between gap-3">
