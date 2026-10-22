@@ -14,12 +14,10 @@ export function Hero() {
       />
 
       <div className="mx-auto max-w-4xl px-5 pt-20 pb-16 text-center sm:px-8 sm:pt-28 sm:pb-24">
-        <p className="animate-fade-up text-xs font-semibold tracking-[0.2em] text-copper uppercase">
-          Boas oportunidades, bem escolhidas
-        </p>
+        {/* O texto "Boas oportunidades, bem escolhidas" foi removido daqui */}
 
         <h1
-          className="animate-fade-up mt-6 font-display text-[clamp(2.5rem,7vw,4.75rem)] leading-[1.02] font-semibold tracking-tight text-forest"
+          className="animate-fade-up font-display text-[clamp(2.5rem,7vw,4.75rem)] leading-[1.02] font-semibold tracking-tight text-forest"
           style={{ animationDelay: "60ms" }}
         >
           As melhores
