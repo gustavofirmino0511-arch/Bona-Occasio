@@ -1,7 +1,51 @@
 import { useEffect, useState } from "react";
 import { Link, NavLink } from "react-router-dom";
-import { Menu, X, Send, MessageCircle, Facebook, Instagram, Video } from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+
+// --- Ícones de marcas (SVGs oficiais, pois o lucide-react removeu na v1) ---
+function InstagramIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <rect width="20" height="20" x="2" y="2" rx="5" ry="5" />
+      <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" />
+      <line x1="17.5" x2="17.51" y1="6.5" y2="6.5" />
+    </svg>
+  );
+}
+
+function FacebookIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M18 2h-3a5 5 0 0 0-5 5v3H7v4h3v8h4v-8h3l1-4h-4V7a1 1 0 0 1 1-1h3z" />
+    </svg>
+  );
+}
+
+function TikTokIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M9 12a4 4 0 1 0 4 4V4a5 5 0 0 0 5 5" />
+    </svg>
+  );
+}
+
+function TelegramIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="m22 2-7 20-4-9-9-4Z" />
+      <path d="M22 2 11 13" />
+    </svg>
+  );
+}
+
+function WhatsAppIcon(props: React.SVGProps<SVGSVGElement>) {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
+      <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" />
+    </svg>
+  );
+}
 
 export function Header() {
   const [scrolled, setScrolled] = useState(false);
@@ -73,7 +117,6 @@ export function Header() {
               Ver ofertas
             </Link>
 
-            {/* Botão Hambúrguer */}
             <button
               onClick={() => setIsMenuOpen(true)}
               className="p-2 text-forest hover:text-copper transition-colors"
@@ -85,7 +128,6 @@ export function Header() {
         </div>
       </header>
 
-      {/* Fundo escuro */}
       <div
         className={cn(
           "fixed inset-0 z-50 bg-ink/40 backdrop-blur-sm transition-opacity duration-300",
@@ -95,7 +137,6 @@ export function Header() {
         aria-hidden="true"
       />
 
-      {/* Menu Lateral (Gaveta) */}
       <div
         className={cn(
           "fixed inset-y-0 right-0 z-50 flex w-full max-w-sm flex-col bg-cream shadow-2xl transition-transform duration-300 ease-in-out",
@@ -116,7 +157,6 @@ export function Header() {
 
         <div className="flex-1 overflow-y-auto p-6">
           
-          {/* 1. Redes Sociais (Agora no topo, como você pediu) */}
           <div className="mb-10">
             <h3 className="mb-4 text-xs font-bold tracking-widest text-forest uppercase">
               Nos siga nas redes sociais
@@ -126,27 +166,26 @@ export function Header() {
                 href="#"
                 className="flex items-center gap-4 rounded-xl border border-transparent px-4 py-3 text-sm font-medium text-stone transition-all hover:border-sand hover:bg-white hover:text-forest hover:shadow-sm"
               >
-                <Instagram className="size-5 text-copper" />
+                <InstagramIcon className="size-5 text-copper" />
                 Instagram
               </a>
               <a
                 href="#"
                 className="flex items-center gap-4 rounded-xl border border-transparent px-4 py-3 text-sm font-medium text-stone transition-all hover:border-sand hover:bg-white hover:text-forest hover:shadow-sm"
               >
-                <Facebook className="size-5 text-copper" />
+                <FacebookIcon className="size-5 text-copper" />
                 Facebook
               </a>
               <a
                 href="#"
                 className="flex items-center gap-4 rounded-xl border border-transparent px-4 py-3 text-sm font-medium text-stone transition-all hover:border-sand hover:bg-white hover:text-forest hover:shadow-sm"
               >
-                <Video className="size-5 text-copper" />
+                <TikTokIcon className="size-5 text-copper" />
                 TikTok
               </a>
             </div>
           </div>
 
-          {/* 2. Nossos Grupos (Agora embaixo, com os nomes corretos) */}
           <div>
             <h3 className="mb-4 text-xs font-bold tracking-widest text-forest uppercase">
               Nossos Grupos
@@ -156,14 +195,14 @@ export function Header() {
                 href="#"
                 className="flex items-center gap-4 rounded-xl border border-transparent px-4 py-3 text-sm font-medium text-stone transition-all hover:border-sand hover:bg-white hover:text-forest hover:shadow-sm"
               >
-                <Send className="size-5 text-copper" />
+                <TelegramIcon className="size-5 text-copper" />
                 Grupo no Telegram
               </a>
               <a
                 href="#"
                 className="flex items-center gap-4 rounded-xl border border-transparent px-4 py-3 text-sm font-medium text-stone transition-all hover:border-sand hover:bg-white hover:text-forest hover:shadow-sm"
               >
-                <MessageCircle className="size-5 text-copper" />
+                <WhatsAppIcon className="size-5 text-copper" />
                 Canal no WhatsApp
               </a>
             </div>
@@ -173,4 +212,4 @@ export function Header() {
       </div>
     </>
   );
-      }
+}
