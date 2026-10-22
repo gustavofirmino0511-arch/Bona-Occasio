@@ -3,8 +3,9 @@ export function Footer() {
     <footer id="sobre" className="mt-24 border-t border-sand">
       <div className="mx-auto grid max-w-6xl gap-10 px-5 py-14 sm:grid-cols-3 sm:px-8">
         <div>
+          {/* Logo sem o ponto final */}
           <p className="font-display text-lg font-semibold text-forest">
-            Bona Occasio<span className="text-copper">.</span>
+            Bona Occasio
           </p>
           <p className="mt-3 max-w-xs text-sm text-stone">
             Um catálogo enxuto de produtos que recomendamos de verdade. Os
@@ -18,13 +19,13 @@ export function Footer() {
           </p>
           <ul className="mt-4 space-y-2 text-sm text-stone">
             <li>
-              <a href="#ofertas" className="hover:text-copper">
-                Ofertas
+              <a href="/catalogo" className="hover:text-copper">
+                Catálogo
               </a>
             </li>
             <li>
-              <a href="#categorias" className="hover:text-copper">
-                Categorias
+              <a href="/sobre" className="hover:text-copper">
+                Sobre
               </a>
             </li>
           </ul>
