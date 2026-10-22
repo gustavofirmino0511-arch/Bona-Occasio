@@ -3,7 +3,7 @@ import { Link, NavLink } from "react-router-dom";
 import { Menu, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-// --- Ícones de marcas (SVGs oficiais, pois o lucide-react removeu na v1) ---
+// --- Ícones de marcas ---
 function InstagramIcon(props: React.SVGProps<SVGSVGElement>) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -85,11 +85,12 @@ export function Header() {
         )}
       >
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5 sm:px-8">
+          {/* Logo sem o ponto final */}
           <Link
             to="/"
             className="font-display text-lg font-semibold tracking-tight text-forest"
           >
-            Bona Occasio<span className="text-copper">.</span>
+            Bona Occasio
           </Link>
 
           <nav className="hidden items-center gap-8 text-sm font-medium text-stone sm:flex">
