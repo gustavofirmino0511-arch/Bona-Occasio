@@ -77,6 +77,7 @@ export interface AiProductDraft {
   shortName: string;
   brand: string;
   tagline: string;
+  image?: string;
   price: number;
   originalPrice?: number;
   installmentText: string;

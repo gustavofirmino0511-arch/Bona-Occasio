@@ -117,3 +117,28 @@ test("AI category advisor suggests new affiliate categories and product improvem
   assert.ok(advice.productImprovements.length >= 2);
   assert.ok(advice.strategicSummary.length > 20);
 });
+
+test("meli.la USB-C earphone with compatibility text is classified as audio with real brand, price, and photo", () => {
+  const title =
+    "Fones De Ouvido Usb-c Tipo C Com Microfone Integrado Som Estéreo Alta Qualidade Controle Chamadas Compatível Com iPhone 15 16 17 18 Android Samsung Xiaomi Motorola PLUG & PLAY Premium Eletric Teck";
+  const draft = heuristicAnalyzeProductInput(title, undefined, {
+    originalUrl: "https://meli.la/2mHWbch",
+    title,
+    detectedPrice: 22.3,
+    detectedOriginalPrice: 59.99,
+    detectedBrand: "ELETRIC TECK",
+    imageUrl:
+      "https://http2.mlstatic.com/D_NQ_NP_2X_693659-MLA113618776783_062026-F.webp",
+  });
+
+  assert.equal(draft.category, "audio");
+  assert.equal(draft.brand, "Eletric Teck");
+  assert.equal(draft.price, 22.3);
+  assert.equal(draft.originalPrice, 59.99);
+  assert.equal(
+    draft.image,
+    "https://http2.mlstatic.com/D_NQ_NP_2X_693659-MLA113618776783_062026-F.webp",
+  );
+  assert.ok(draft.metrics.costBenefit >= 88);
+});
+

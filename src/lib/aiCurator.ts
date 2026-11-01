@@ -85,6 +85,441 @@ export function generateProductImageForDraft(draft: AiProductDraft): string {
   });
 }
 
+export interface ResolvedUrlMetadata {
+  originalUrl?: string;
+  finalUrl?: string;
+  title?: string;
+  description?: string;
+  contentSnippet?: string;
+  imageUrl?: string;
+  detectedPrice?: number;
+  detectedOriginalPrice?: number;
+  detectedBrand?: string;
+  isShortenerBlocked?: boolean;
+}
+
+const BLOCKED_OR_GENERIC_TITLES = [
+  "shopee brasil",
+  "faça login",
+  "faca login",
+  "login",
+  "entrar",
+  "captcha",
+  "robot check",
+  "verificação",
+  "verificacao",
+  "mercado livre",
+  "mercadolivre",
+  "amazon.com.br",
+  "algo deu errado",
+  "não foi possível encontrar",
+  "nao foi possivel encontrar",
+  "page not found",
+  "403 forbidden",
+  "access denied",
+  "just a moment",
+  "attention required",
+];
+
+function isTitleBlockedOrGeneric(rawTitle: string): boolean {
+  const clean = rawTitle.trim().toLowerCase();
+  if (clean.length < 5) return true;
+  if (BLOCKED_OR_GENERIC_TITLES.some((b) => clean === b || clean.startsWith(b))) {
+    return true;
+  }
+  if (
+    clean.includes("shopee brasil | ofertas") ||
+    clean.includes("compre online no") ||
+    clean.includes("faça seu login") ||
+    clean.includes("digite os caracteres")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function parseBrPrice(raw: string): number | undefined {
+  const p = Number(raw.replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(p) && p >= 5 && p <= 150000 ? p : undefined;
+}
+
+function extractPriceFromTitleOrDesc(text: string): number | undefined {
+  if (!text) return undefined;
+  const m =
+    text.match(/[-–—|]\s*R\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/i) ||
+    text.match(/R\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/i);
+  return m?.[1] ? parseBrPrice(m[1]) : undefined;
+}
+
+function cleanStoreSuffixFromTitle(rawTitle: string): string {
+  return rawTitle
+    .replace(/^Olha o que eu encontrei!\s*/i, "")
+    .replace(/\s*[-–—|]\s*R\$\s*\d{1,3}(?:\.\d{3})*(?:,\d{2})?.*$/i, "")
+    .replace(/\s+no\s+Mercado\s+Livre\.?$/i, "")
+    .replace(
+      /\s*[|\-–—]\s*(Shopee|Mercado Livre|MercadoLivre|Amazon\.com\.br|Amazon|Magalu|Magazine Luiza|KaBuM!|Kabum|Casas Bahia|AliExpress).*$/i,
+      "",
+    )
+    .replace(/^Compre\s+/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function upgradeStoreImageUrl(url: string): string {
+  // Converte miniaturas do Mercado Livre (D_Q_NP_2X_...-V.webp / -T.webp) para alta resolução (D_NQ_NP_2X_...-F.webp)
+  if (url.includes("mlstatic.com/D_Q_NP_")) {
+    return url
+      .replace("D_Q_NP_", "D_NQ_NP_")
+      .replace(/-[VT]\.(webp|jpg|png)$/i, "-F.$1");
+  }
+  return url;
+}
+
+export function extractSlugFromUrl(urlStr: string): string {
+  try {
+    const url = new URL(urlStr);
+    const host = url.hostname.toLowerCase();
+    // Links encurtados ou vitrines sociais não possuem o nome do produto na própria URL curta
+    if (
+      host === "s.shopee.com.br" ||
+      host === "shope.ee" ||
+      host === "amzn.to" ||
+      host === "a.co" ||
+      host === "bit.ly" ||
+      host === "meli.la" ||
+      host.endsWith(".meli.la") ||
+      url.pathname.startsWith("/sec/") ||
+      url.pathname.startsWith("/social/")
+    ) {
+      return "";
+    }
+
+    const segments = url.pathname
+      .split("/")
+      .map((s) => decodeURIComponent(s))
+      .filter(
+        (s) =>
+          s.length > 5 &&
+          !s.startsWith("dp") &&
+          !s.startsWith("gp") &&
+          !/^MLB-?\d+$/i.test(s) &&
+          !/^[A-Z0-9]{8,14}$/.test(s),
+      );
+
+    if (segments.length === 0) return "";
+    const longest = segments.sort((a, b) => b.length - a.length)[0] ?? "";
+    const cleaned = longest
+      .replace(/^MLB-?\d+-?/i, "")
+      .replace(/[-_+.]/g, " ")
+      .replace(/\b(i\.\d+|\d{7,}|html|htm|JM)\b/gi, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+    // Precisa ter pelo menos 2 palavras reais para ser um nome de produto
+    return cleaned.split(" ").filter((w) => w.length >= 2).length >= 2
+      ? cleaned
+      : "";
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Abre e lê o link do produto (mesmo links encurtados como meli.la, mercadolivre.com/sec, amzn.to e Shopee)
+ * usando leitores web compatíveis com CORS para descobrir o título real, preço, foto e ficha técnica.
+ */
+export async function resolveProductUrlContent(
+  rawInput: string,
+): Promise<ResolvedUrlMetadata> {
+  const urlMatch = rawInput.match(/https?:\/\/[^\s"'<>]+/i);
+  if (!urlMatch) {
+    return {};
+  }
+
+  const targetUrl = urlMatch[0].trim();
+  const result: ResolvedUrlMetadata = {
+    originalUrl: targetUrl,
+  };
+
+  // 1. Se tiver código MLB explícito do Mercado Livre na URL, tenta buscar também na API pública do ML
+  const mlbMatch = targetUrl.match(/MLB-?(\d{7,14})/i);
+  if (mlbMatch) {
+    try {
+      const mlbId = `MLB${mlbMatch[1]}`;
+      const mlRes = await fetch(`https://api.mercadolibre.com/items/${mlbId}`, {
+        signal: AbortSignal.timeout(4000),
+      });
+      if (mlRes.ok) {
+        const mlData = (await mlRes.json()) as {
+          title?: string;
+          price?: number;
+          original_price?: number;
+          permalink?: string;
+          pictures?: { secure_url?: string }[];
+          attributes?: { id?: string; name?: string; value_name?: string }[];
+        };
+        if (mlData.title && !isTitleBlockedOrGeneric(mlData.title)) {
+          result.title = cleanStoreSuffixFromTitle(mlData.title);
+          result.finalUrl = mlData.permalink || targetUrl;
+          if (typeof mlData.price === "number" && mlData.price > 0) {
+            result.detectedPrice = mlData.price;
+          }
+          if (
+            typeof mlData.original_price === "number" &&
+            mlData.original_price > (mlData.price || 0)
+          ) {
+            result.detectedOriginalPrice = mlData.original_price;
+          }
+          if (mlData.pictures?.[0]?.secure_url) {
+            result.imageUrl = mlData.pictures[0].secure_url;
+          }
+          if (Array.isArray(mlData.attributes)) {
+            const brandAttr = mlData.attributes.find(
+              (a) =>
+                a.id === "BRAND" ||
+                a.name?.toLowerCase() === "marca",
+            );
+            if (brandAttr?.value_name) {
+              result.detectedBrand = brandAttr.value_name;
+            }
+            result.contentSnippet = mlData.attributes
+              .filter((a) => a.name && a.value_name)
+              .map((a) => `${a.name}: ${a.value_name}`)
+              .join(" | ")
+              .slice(0, 1200);
+          }
+          return result;
+        }
+      }
+    } catch {
+      // Continua para o leitor universal Jina / AllOrigins
+    }
+  }
+
+  // 2. Leitor Universal Jina Reader (segue redirecionamentos de links curtos como meli.la e extrai título, preço, marca e foto)
+  try {
+    const jinaRes = await fetch(`https://r.jina.ai/${targetUrl}`, {
+      headers: {
+        Accept: "application/json",
+        "X-Return-Format": "markdown",
+      },
+      signal: AbortSignal.timeout(6500),
+    });
+
+    if (jinaRes.ok) {
+      const jinaJson = (await jinaRes.json()) as {
+        data?: {
+          title?: string;
+          description?: string;
+          url?: string;
+          finalUrl?: string;
+          content?: string;
+        };
+      };
+      const data = jinaJson.data;
+      if (data) {
+        const finalUrl = data.finalUrl || data.url || targetUrl;
+        result.finalUrl = finalUrl;
+
+        // Extrai preço direto do título ou descrição (ex: "... - R$ 22,30") antes de limpar o sufixo
+        const priceInTitleOrDesc =
+          extractPriceFromTitleOrDesc(data.title || "") ||
+          extractPriceFromTitleOrDesc(data.description || "");
+        if (priceInTitleOrDesc) {
+          result.detectedPrice = priceInTitleOrDesc;
+        }
+
+        const rawTitle = cleanStoreSuffixFromTitle(data.title || "");
+        const slugFromFinalUrl = extractSlugFromUrl(finalUrl);
+
+        if (rawTitle && !isTitleBlockedOrGeneric(rawTitle)) {
+          result.title = rawTitle;
+        } else if (slugFromFinalUrl) {
+          result.title = slugFromFinalUrl;
+        }
+
+        if (data.description && !isTitleBlockedOrGeneric(data.description)) {
+          result.description = cleanStoreSuffixFromTitle(data.description).slice(
+            0,
+            500,
+          );
+        }
+
+        if (data.content) {
+          const fullContent = data.content;
+          const titleKey = (result.title || "").slice(0, 26).trim().toLowerCase();
+          const titlePos =
+            titleKey.length >= 6
+              ? fullContent.toLowerCase().indexOf(titleKey)
+              : -1;
+
+          // Isola o bloco onde o produto realmente aparece (ignorando menus gigantes do topo da loja)
+          const relevantBlock =
+            titlePos >= 0
+              ? fullContent.slice(
+                  Math.max(0, titlePos - 150),
+                  Math.min(fullContent.length, titlePos + 2400),
+                )
+              : fullContent.slice(0, 2400);
+
+          // Remove URLs longas de rastreamento do markdown para manter apenas o texto útil do produto
+          result.contentSnippet = relevantBlock
+            .replace(/\]\(https?:\/\/[^)\s]+\)/g, "]")
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, 1200);
+
+          // Extrai marca oficial se presente no formato "Por MARCA" (padrão Mercado Livre)
+          const brandMatch = relevantBlock.match(
+            /\bPor\s+([A-Z0-9À-Ú][A-Za-z0-9À-ú\s&.'-]{1,24}?)(?=\s*~~|\s*R\$|\n|$)/,
+          );
+          if (brandMatch?.[1]) {
+            result.detectedBrand = brandMatch[1].trim();
+          }
+
+          // Extrai preço original riscado (ex: ~~R$59,99~~)
+          const origPriceMatch = relevantBlock.match(
+            /~~\s*R\$\s*(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)\s*~~/i,
+          );
+          if (origPriceMatch?.[1]) {
+            const origP = parseBrPrice(origPriceMatch[1]);
+            if (origP) result.detectedOriginalPrice = origP;
+          }
+
+          // Se ainda não achou o preço no título, procura no bloco do produto (sem os preços riscados)
+          if (!result.detectedPrice) {
+            const blockWithoutCrossedOut = relevantBlock.replace(
+              /~~[^~]+~~/g,
+              " ",
+            );
+            const priceMatch = blockWithoutCrossedOut.match(
+              /R\$\s?(\d{1,3}(?:\.\d{3})*(?:,\d{2})?)/i,
+            );
+            if (priceMatch?.[1]) {
+              const p = parseBrPrice(priceMatch[1]);
+              if (p) result.detectedPrice = p;
+            }
+          }
+
+          // Procura a foto real do produto (priorizando a imagem cujo ALT bate com o título do produto)
+          const allImages = [
+            ...fullContent.matchAll(
+              /!\[([^\]]*)\]\((https:\/\/[^)\s]+?\.(?:jpg|jpeg|png|webp)[^)\s]*)\)/gi,
+            ),
+          ]
+            .map((m) => ({ alt: m[1].trim(), url: m[2].trim() }))
+            .filter(({ alt, url }) => {
+              const lowerAlt = alt.toLowerCase();
+              const lowerUrl = url.toLowerCase();
+              return (
+                !lowerAlt.includes("logo") &&
+                !lowerAlt.includes("meli+") &&
+                !lowerAlt.includes("cupom") &&
+                !lowerAlt.includes("assinante") &&
+                !lowerUrl.includes("logo") &&
+                !lowerUrl.includes("icon") &&
+                !lowerUrl.includes("sprite") &&
+                !lowerUrl.includes("banner") &&
+                !lowerUrl.endsWith("-oo.webp") &&
+                !lowerUrl.endsWith("-g.webp")
+              );
+            });
+
+          const matchingAltImg =
+            titleKey.length >= 8
+              ? allImages.find((img) =>
+                  img.alt.toLowerCase().includes(titleKey.slice(0, 18)),
+                )
+              : undefined;
+
+          const chosenImg = matchingAltImg?.url || allImages[0]?.url;
+          if (chosenImg) {
+            result.imageUrl = upgradeStoreImageUrl(chosenImg);
+          }
+        }
+
+        if (result.title) {
+          return result;
+        }
+      }
+    }
+  } catch {
+    // Continua para AllOrigins fallback
+  }
+
+  // 3. Fallback via AllOrigins (lê <title>, og:title, og:image e response url final)
+  try {
+    const aoRes = await fetch(
+      `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`,
+      { signal: AbortSignal.timeout(5000) },
+    );
+    if (aoRes.ok) {
+      const aoData = (await aoRes.json()) as {
+        contents?: string;
+        status?: { url?: string };
+      };
+      const finalUrl = aoData.status?.url || targetUrl;
+      result.finalUrl = finalUrl;
+
+      const html = aoData.contents || "";
+      const ogTitleMatch =
+        html.match(
+          /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i,
+        ) || html.match(/<title[^>]*>([^<]+)<\/title>/i);
+      const ogImgMatch = html.match(
+        /<meta[^>]+property=["']og:image["'][^>]+content=["']([^"']+)["']/i,
+      );
+      const ogDescMatch = html.match(
+        /<meta[^>]+(?:property=["']og:description["']|name=["']description["'])[^>]+content=["']([^"']+)["']/i,
+      );
+
+      if (ogTitleMatch?.[1]) {
+        const priceInOg = extractPriceFromTitleOrDesc(ogTitleMatch[1]);
+        if (priceInOg && !result.detectedPrice) {
+          result.detectedPrice = priceInOg;
+        }
+        const cleaned = cleanStoreSuffixFromTitle(ogTitleMatch[1]);
+        if (!isTitleBlockedOrGeneric(cleaned)) {
+          result.title = cleaned;
+        }
+      }
+      if (!result.title) {
+        const slug = extractSlugFromUrl(finalUrl);
+        if (slug) result.title = slug;
+      }
+      if (ogImgMatch?.[1]?.startsWith("https://")) {
+        result.imageUrl = upgradeStoreImageUrl(ogImgMatch[1]);
+      }
+      if (ogDescMatch?.[1]) {
+        const priceInDesc = extractPriceFromTitleOrDesc(ogDescMatch[1]);
+        if (priceInDesc && !result.detectedPrice) {
+          result.detectedPrice = priceInDesc;
+        }
+        result.description = cleanStoreSuffixFromTitle(ogDescMatch[1]).slice(
+          0,
+          500,
+        );
+      }
+      if (result.title) {
+        return result;
+      }
+    }
+  } catch {
+    // Ignora erro de rede
+  }
+
+  // 4. Última tentativa: extrair o nome direto do próprio endereço da URL caso seja um link longo
+  const directSlug = extractSlugFromUrl(result.finalUrl || targetUrl);
+  if (directSlug) {
+    result.title = directSlug;
+    return result;
+  }
+
+  // Se chegou aqui e o usuário só colou um link encurtado (ex: s.shopee.com.br/xyz) sem nome do produto:
+  result.isShortenerBlocked = true;
+  return result;
+}
+
 /**
  * Converte um AiProductDraft (vindo da IA) em um objeto Product pronto para o catálogo e comparador.
  */
@@ -99,13 +534,19 @@ export function buildProductFromAiDraft(
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
+  const customImage =
+    draft.image &&
+    (draft.image.startsWith("https://") || draft.image.startsWith("data:image/"))
+      ? draft.image.trim()
+      : generateProductImageForDraft(draft);
+
   return {
     id: `${draft.category}-${slug}-${Date.now().toString().slice(-4)}`,
     name: draft.name,
     shortName: draft.shortName,
     brand: draft.brand,
     tagline: draft.tagline,
-    image: generateProductImageForDraft(draft),
+    image: customImage,
     price: Number(draft.price) || 999,
     originalPrice: draft.originalPrice ? Number(draft.originalPrice) : undefined,
     installmentText:
@@ -142,41 +583,50 @@ export function buildProductFromAiDraft(
 export function heuristicAnalyzeProductInput(
   rawInput: string,
   priceHint?: number,
+  resolvedMeta?: ResolvedUrlMetadata,
 ): AiProductDraft {
-  const text = rawInput.trim();
-  const lower = text.toLowerCase();
+  // Remove URLs brutas do texto digitado pelo usuário para isolar qualquer nome/modelo que ele tenha escrito
+  const textWithoutUrls = rawInput
+    .replace(/https?:\/\/[^\s"'<>]+/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  // Extrai nome legível mesmo se o usuário colou apenas uma URL de loja (Shopee / Mercado Livre / Amazon)
-  let cleanTitle = text;
-  if (text.startsWith("http://") || text.startsWith("https://")) {
-    try {
-      const url = new URL(text);
-      const pathSegments = url.pathname
-        .split("/")
-        .filter(
-          (s) =>
-            s.length > 3 &&
-            !s.startsWith("dp") &&
-            !s.startsWith("MLB") &&
-            !s.startsWith("p"),
-        );
-      const bestSegment =
-        pathSegments.sort((a, b) => b.length - a.length)[0] ??
-        "Produto Selecionado";
-      cleanTitle = decodeURIComponent(bestSegment)
-        .replace(/[-_+.]/g, " ")
-        .replace(/\b(i\.\d+|\d{6,}|html|htm)\b/gi, "")
-        .replace(/\s+/g, " ")
-        .trim();
-    } catch {
-      cleanTitle = "Produto Selecionado";
-    }
-  }
+  const resolvedTitle = resolvedMeta?.title?.trim() || "";
+  const urlSlug =
+    extractSlugFromUrl(resolvedMeta?.finalUrl || "") ||
+    extractSlugFromUrl(rawInput);
 
-  // Detecta preço no texto se não veio no priceHint
-  let detectedPrice = priceHint && priceHint > 0 ? priceHint : 0;
+  // O título real do produto vem do que o usuário escreveu + o título lido da página + o slug da URL
+  const cleanTitle =
+    textWithoutUrls.length >= 4
+      ? textWithoutUrls
+      : resolvedTitle.length >= 4
+        ? resolvedTitle
+        : urlSlug.length >= 4
+          ? urlSlug
+          : "Produto Selecionado";
+
+  const combinedContext = [
+    cleanTitle,
+    resolvedTitle,
+    resolvedMeta?.description || "",
+    resolvedMeta?.contentSnippet || "",
+    urlSlug,
+  ]
+    .join(" ")
+    .trim();
+
+  const lower = combinedContext.toLowerCase();
+
+  // Detecta preço no texto ou nos metadados da página se não veio no priceHint
+  let detectedPrice =
+    priceHint && priceHint > 0
+      ? priceHint
+      : resolvedMeta?.detectedPrice && resolvedMeta.detectedPrice > 0
+        ? resolvedMeta.detectedPrice
+        : 0;
   if (!detectedPrice) {
-    const priceMatch = text.match(
+    const priceMatch = combinedContext.match(
       /R\$\s?(\d{1,3}(?:\.\d{3})*(?:,\d{2})?|\d+)/i,
     );
     if (priceMatch) {
@@ -187,31 +637,58 @@ export function heuristicAnalyzeProductInput(
   }
 
   const clampScore = (n: number) => Math.max(45, Math.min(99, Math.round(n)));
+  const resolvedImage = resolvedMeta?.imageUrl;
+  const resolvedBrand = resolvedMeta?.detectedBrand
+    ? resolvedMeta.detectedBrand
+        .toLowerCase()
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+    : undefined;
+
+  // Isola o assunto principal do produto removendo trechos "Compatível com iPhone / Samsung / Notebook..."
+  const primarySubject = (cleanTitle || lower)
+    .toLowerCase()
+    .replace(
+      /\b(compat[íi]vel\s+(com|para|p\/)?|ideal\s+para|indicado\s+para|serve\s+(em|para)|p\/\s*(iphone|ipad|macbook|airpods|samsung|galaxy|xiaomi|redmi|poco|motorola|celular|smartphone|notebook|laptop|pc|computador)|para\s+(iphone|ipad|macbook|airpods|samsung|galaxy|xiaomi|redmi|poco|motorola|celular|smartphone|notebook|laptop|pc|computador|ps4|ps5|xbox|nintendo))\b.*$/i,
+      "",
+    )
+    .trim();
+
+  const isPrimaryAudio =
+    /\b(fones?|headphone|headset|earbuds|airpods|buds|caixa de som|soundbar|microfone|edifier|jbl|qcy|anker|soundcore)\b/i.test(
+      primarySubject,
+    );
+
+  const isPrimaryNonPhoneOrPc =
+    isPrimaryAudio ||
+    /\b(carregador|cabo|capinha|capa|pel[íi]cula|suporte|adaptador|hub|mouse|teclado|webcam|cadeira|poltrona|monitor|smart\s?tv|televis[ãa]o|smartwatch|rel[óo]gio|mi\s?band|amazfit|air\s?fryer|fritadeira|cafeteira|aspirador|liquidificador|panela|ventilador|controle|joystick|dualsense)\b/i.test(
+      primarySubject,
+    );
 
   // ============================================================================
   // 1. NOTEBOOKS & COMPUTADORES
   // ============================================================================
   if (
-    lower.includes("notebook") ||
-    lower.includes("laptop") ||
-    lower.includes("macbook") ||
-    lower.includes("inspiron") ||
-    lower.includes("vivobook") ||
-    lower.includes("ideapad") ||
-    lower.includes("thinkpad") ||
-    lower.includes("galaxy book") ||
-    lower.includes("nitro") ||
-    lower.includes("predator") ||
-    lower.includes("legion") ||
-    lower.includes("tuf") ||
-    lower.includes("rog") ||
-    lower.includes("pc gamer") ||
-    lower.includes("computador") ||
-    lower.includes("ryzen") ||
-    lower.includes("core i3") ||
-    lower.includes("core i5") ||
-    lower.includes("core i7") ||
-    lower.includes("core i9")
+    !isPrimaryNonPhoneOrPc &&
+    (primarySubject.includes("notebook") ||
+      primarySubject.includes("laptop") ||
+      primarySubject.includes("macbook") ||
+      primarySubject.includes("inspiron") ||
+      primarySubject.includes("vivobook") ||
+      primarySubject.includes("ideapad") ||
+      primarySubject.includes("thinkpad") ||
+      primarySubject.includes("galaxy book") ||
+      primarySubject.includes("nitro") ||
+      primarySubject.includes("predator") ||
+      primarySubject.includes("legion") ||
+      primarySubject.includes("tuf") ||
+      primarySubject.includes("rog") ||
+      primarySubject.includes("pc gamer") ||
+      primarySubject.includes("computador") ||
+      lower.includes("ryzen") ||
+      lower.includes("core i3") ||
+      lower.includes("core i5") ||
+      lower.includes("core i7") ||
+      lower.includes("core i9"))
   ) {
     // Benchmark real de CPU (0 a 100)
     let cpuLabel = "Intel Core i5 / AMD Ryzen 5 (6 a 8 núcleos)";
@@ -376,19 +853,21 @@ export function heuristicAnalyzeProductInput(
       ? 92
       : 85;
 
-    const brand = lower.includes("apple") || lower.includes("macbook")
-      ? "Apple"
-      : lower.includes("dell") || lower.includes("inspiron")
-        ? "Dell"
-        : lower.includes("samsung") || lower.includes("galaxy book")
-          ? "Samsung"
-          : lower.includes("lenovo") || lower.includes("ideapad") || lower.includes("legion")
-            ? "Lenovo"
-            : lower.includes("acer") || lower.includes("nitro")
-              ? "Acer"
-              : lower.includes("asus") || lower.includes("vivobook") || lower.includes("tuf")
-                ? "ASUS"
-                : "Notebook";
+    const brand =
+      resolvedBrand ||
+      (primarySubject.includes("apple") || primarySubject.includes("macbook")
+        ? "Apple"
+        : primarySubject.includes("dell") || primarySubject.includes("inspiron")
+          ? "Dell"
+          : primarySubject.includes("samsung") || primarySubject.includes("galaxy book")
+            ? "Samsung"
+            : primarySubject.includes("lenovo") || primarySubject.includes("ideapad") || primarySubject.includes("legion")
+              ? "Lenovo"
+              : primarySubject.includes("acer") || primarySubject.includes("nitro")
+                ? "Acer"
+                : primarySubject.includes("asus") || primarySubject.includes("vivobook") || primarySubject.includes("tuf")
+                  ? "ASUS"
+                  : "Notebook");
 
     const name =
       cleanTitle.length > 6
@@ -422,11 +901,13 @@ export function heuristicAnalyzeProductInput(
       name,
       shortName,
       brand,
+      image: resolvedImage,
       tagline: hasDedicatedGpu
         ? `Desempenho gráfico dedicado (${gpuScore}/100) com ${cpuLabel} para jogos e criação pesada.`
         : `Conjunto equilibrado (${performanceMetric}/100) com ${cpuLabel} e SSD NVMe para produtividade diária.`,
       price,
-      originalPrice: Math.round(price * 1.16),
+      originalPrice:
+        resolvedMeta?.detectedOriginalPrice || Math.round(price * 1.16),
       installmentText: `Em até 10x de R$ ${(price / 10).toFixed(2).replace(".", ",")} sem juros`,
       category: "notebooks",
       idealFor: hasDedicatedGpu
@@ -527,39 +1008,40 @@ export function heuristicAnalyzeProductInput(
   // 2. SMARTPHONES & CELULARES
   // ============================================================================
   if (
-    lower.includes("smartphone") ||
-    lower.includes("celular") ||
-    lower.includes("iphone") ||
-    lower.includes("galaxy") ||
-    lower.includes("redmi") ||
-    lower.includes("poco") ||
-    lower.includes("moto ") ||
-    lower.includes("motorola") ||
-    lower.includes("xiaomi") ||
-    lower.includes("realme") ||
-    lower.includes("infinix")
+    !isPrimaryNonPhoneOrPc &&
+    (primarySubject.includes("smartphone") ||
+      primarySubject.includes("celular") ||
+      primarySubject.includes("iphone") ||
+      primarySubject.includes("galaxy") ||
+      primarySubject.includes("redmi") ||
+      primarySubject.includes("poco") ||
+      primarySubject.includes("moto ") ||
+      primarySubject.includes("motorola") ||
+      primarySubject.includes("xiaomi") ||
+      primarySubject.includes("realme") ||
+      primarySubject.includes("infinix"))
   ) {
     const isFlagship =
-      lower.includes("iphone 15") ||
-      lower.includes("iphone 16") ||
-      lower.includes("iphone 14") ||
-      lower.includes("s23") ||
-      lower.includes("s24") ||
-      lower.includes("edge 50") ||
-      lower.includes("poco x6 pro") ||
-      lower.includes("poco f6") ||
+      primarySubject.includes("iphone 15") ||
+      primarySubject.includes("iphone 16") ||
+      primarySubject.includes("iphone 14") ||
+      primarySubject.includes("s23") ||
+      primarySubject.includes("s24") ||
+      primarySubject.includes("edge 50") ||
+      primarySubject.includes("poco x6 pro") ||
+      primarySubject.includes("poco f6") ||
       lower.includes("snapdragon 8");
     const isUpperMid =
-      lower.includes("a55") ||
-      lower.includes("a54") ||
-      lower.includes("a35") ||
-      lower.includes("note 13 pro") ||
-      lower.includes("g84") ||
-      lower.includes("g85") ||
-      lower.includes("iphone 13");
+      primarySubject.includes("a55") ||
+      primarySubject.includes("a54") ||
+      primarySubject.includes("a35") ||
+      primarySubject.includes("note 13 pro") ||
+      primarySubject.includes("g84") ||
+      primarySubject.includes("g85") ||
+      primarySubject.includes("iphone 13");
 
     const cpuScore = isFlagship ? 96 : isUpperMid ? 87 : 77;
-    const cpuLabel = lower.includes("iphone")
+    const cpuLabel = primarySubject.includes("iphone")
       ? "Chip Apple Bionic Hexa-Core de Alta Eficiência"
       : isFlagship
         ? "Processador Octa-Core Topo de Linha (4nm 5G)"
@@ -585,16 +1067,16 @@ export function heuristicAnalyzeProductInput(
       lower.includes("amoled") ||
       lower.includes("oled") ||
       lower.includes("p-oled") ||
-      lower.includes("iphone") ||
-      lower.includes("galaxy a") ||
-      lower.includes("galaxy s") ||
-      lower.includes("poco") ||
-      lower.includes("g84") ||
-      lower.includes("note 13");
+      primarySubject.includes("iphone") ||
+      primarySubject.includes("galaxy a") ||
+      primarySubject.includes("galaxy s") ||
+      primarySubject.includes("poco") ||
+      primarySubject.includes("g84") ||
+      primarySubject.includes("note 13");
     const screenScore = hasAmoled ? 93 : 76;
 
     const cameraScore = isFlagship ? 95 : isUpperMid ? 88 : 77;
-    const batteryScore = lower.includes("iphone") ? 85 : 91;
+    const batteryScore = primarySubject.includes("iphone") ? 85 : 91;
 
     const expectedPrice = isFlagship ? 3400 : isUpperMid ? 1850 : 1150;
     const price = detectedPrice || expectedPrice;
@@ -605,15 +1087,17 @@ export function heuristicAnalyzeProductInput(
       perfMetric * 0.55 + Math.min(100, (expectedPrice / Math.max(600, price)) * 88) * 0.45,
     );
 
-    const brand = lower.includes("iphone") || lower.includes("apple")
-      ? "Apple"
-      : lower.includes("samsung") || lower.includes("galaxy")
-        ? "Samsung"
-        : lower.includes("moto")
-          ? "Motorola"
-          : lower.includes("xiaomi") || lower.includes("redmi") || lower.includes("poco")
-            ? "Xiaomi"
-            : "Smartphone";
+    const brand =
+      resolvedBrand ||
+      (primarySubject.includes("iphone") || primarySubject.includes("apple")
+        ? "Apple"
+        : primarySubject.includes("samsung") || primarySubject.includes("galaxy")
+          ? "Samsung"
+          : primarySubject.includes("moto")
+            ? "Motorola"
+            : primarySubject.includes("xiaomi") || primarySubject.includes("redmi") || primarySubject.includes("poco")
+              ? "Xiaomi"
+              : "Smartphone");
 
     const name =
       cleanTitle.length > 6
@@ -625,9 +1109,11 @@ export function heuristicAnalyzeProductInput(
       name,
       shortName,
       brand,
+      image: resolvedImage,
       tagline: `Desempenho ${perfMetric}/100 com ${storageLabel}, tela de alto brilho e conjunto de câmeras versátil.`,
       price,
-      originalPrice: Math.round(price * 1.18),
+      originalPrice:
+        resolvedMeta?.detectedOriginalPrice || Math.round(price * 1.18),
       installmentText: `Em até 10x de R$ ${(price / 10).toFixed(2).replace(".", ",")} sem juros`,
       category: "smartphones",
       idealFor: isFlagship
@@ -703,7 +1189,7 @@ export function heuristicAnalyzeProductInput(
         {
           key: "battery",
           label: "Bateria e Recarga",
-          value: lower.includes("iphone")
+          value: primarySubject.includes("iphone")
             ? "Bateria otimizada para o dia inteiro + MagSafe / USB-C"
             : "5.000 mAh de longa duração + Carregamento Rápido",
           score: batteryScore,
@@ -720,7 +1206,7 @@ export function heuristicAnalyzeProductInput(
           : "Bateria de longa duração que passa de um dia inteiro de uso",
       ],
       cons: [
-        lower.includes("iphone") || lower.includes("samsung")
+        primarySubject.includes("iphone") || primarySubject.includes("samsung")
           ? "Carregador de tomada mais potente pode ser vendido separadamente dependendo do lote"
           : "Câmera ultrawide secundária perde detalhes em ambientes muito escuros",
       ],
@@ -732,6 +1218,7 @@ export function heuristicAnalyzeProductInput(
   // 3. FONES DE OUVIDO & ÁUDIO
   // ============================================================================
   if (
+    isPrimaryAudio ||
     lower.includes("fone") ||
     lower.includes("headphone") ||
     lower.includes("headset") ||
@@ -745,68 +1232,108 @@ export function heuristicAnalyzeProductInput(
     lower.includes("anker") ||
     lower.includes("soundcore")
   ) {
+    const isWired =
+      (lower.includes("usb-c") ||
+        lower.includes("tipo c") ||
+        lower.includes("tipo-c") ||
+        lower.includes("com fio") ||
+        lower.includes("p2") ||
+        lower.includes("3.5mm") ||
+        lower.includes("plug & play") ||
+        lower.includes("plug and play")) &&
+      !primarySubject.includes("bluetooth") &&
+      !primarySubject.includes("sem fio") &&
+      !primarySubject.includes("tws");
+
     const isPremium =
-      lower.includes("xm5") ||
-      lower.includes("xm4") ||
-      lower.includes("airpods pro") ||
-      lower.includes("bose") ||
-      lower.includes("sennheiser");
+      !isWired &&
+      (primarySubject.includes("xm5") ||
+        primarySubject.includes("xm4") ||
+        primarySubject.includes("airpods pro") ||
+        primarySubject.includes("bose") ||
+        primarySubject.includes("sennheiser"));
+
     const hasAnc =
-      isPremium ||
-      lower.includes("anc") ||
-      lower.includes("cancelamento") ||
-      lower.includes("nc") ||
-      lower.includes("h3") ||
-      lower.includes("w820") ||
-      lower.includes("q30");
+      !isWired &&
+      (isPremium ||
+        primarySubject.includes("anc") ||
+        primarySubject.includes("cancelamento") ||
+        primarySubject.includes("nc") ||
+        primarySubject.includes("h3") ||
+        primarySubject.includes("w820") ||
+        primarySubject.includes("q30") ||
+        primarySubject.includes("p30i"));
 
     const ancScore = isPremium ? 98 : hasAnc ? 89 : 68;
-    const soundScore = isPremium ? 97 : hasAnc ? 90 : 80;
-    const batteryScore = lower.includes("70h") || lower.includes("60h") || lower.includes("50h")
-      ? 95
-      : 89;
+    const soundScore = isPremium ? 97 : hasAnc ? 90 : isWired ? 78 : 80;
+    const batteryScore = isWired
+      ? 94
+      : lower.includes("70h") || lower.includes("60h") || lower.includes("50h")
+        ? 95
+        : 89;
 
-    const expectedPrice = isPremium ? 1800 : hasAnc ? 290 : 150;
+    const expectedPrice = isPremium ? 1800 : hasAnc ? 290 : isWired ? 49 : 150;
     const price = detectedPrice || expectedPrice;
-    const perfMetric = clampScore(ancScore * 0.4 + soundScore * 0.4 + batteryScore * 0.2);
+    const perfMetric = isWired
+      ? clampScore(soundScore * 0.45 + ancScore * 0.25 + 88 * 0.3)
+      : clampScore(ancScore * 0.4 + soundScore * 0.4 + batteryScore * 0.2);
     const cbMetric = clampScore(
-      perfMetric * 0.5 + Math.min(100, (expectedPrice / Math.max(80, price)) * 90) * 0.5,
+      perfMetric * 0.48 +
+        Math.min(100, (expectedPrice / Math.max(18, price)) * 90) * 0.52,
     );
 
-    const brand = lower.includes("sony")
-      ? "Sony"
-      : lower.includes("jbl")
-        ? "JBL"
-        : lower.includes("edifier")
-          ? "Edifier"
-          : lower.includes("qcy")
-            ? "QCY"
-            : lower.includes("apple") || lower.includes("airpods")
-              ? "Apple"
-              : "Áudio";
+    const brand =
+      resolvedBrand ||
+      (primarySubject.includes("sony")
+        ? "Sony"
+        : primarySubject.includes("jbl")
+          ? "JBL"
+          : primarySubject.includes("edifier")
+            ? "Edifier"
+            : primarySubject.includes("qcy")
+              ? "QCY"
+              : primarySubject.includes("anker") || primarySubject.includes("soundcore")
+                ? "Anker Soundcore"
+                : primarySubject.includes("apple") || primarySubject.includes("airpods")
+                  ? "Apple"
+                  : lower.includes("eletric teck")
+                    ? "Eletric Teck"
+                    : "Áudio");
 
     const name =
       cleanTitle.length > 6
-        ? cleanTitle.slice(0, 60)
-        : `${brand} Bluetooth ${hasAnc ? "com Cancelamento de Ruído ANC" : "Sem Fio"}`;
+        ? cleanTitle.slice(0, 64)
+        : `${brand} ${isWired ? "USB-C Com Microfone" : hasAnc ? "Bluetooth com Cancelamento de Ruído ANC" : "Bluetooth Sem Fio"}`;
     const shortName = name.split(" ").slice(0, 4).join(" ");
+
+    const origPrice =
+      resolvedMeta?.detectedOriginalPrice || Math.round(price * 1.22);
+    const installments = price < 60 ? 2 : 6;
 
     return {
       name,
       shortName,
       brand,
-      tagline: hasAnc
-        ? `Cancelamento ativo de ruído (${ancScore}/100), graves encorpados e bateria de longa duração.`
-        : `Áudio Bluetooth estável (${soundScore}/100), leveza e ótimo custo-benefício para o dia a dia.`,
-      price,
-      originalPrice: Math.round(price * 1.22),
-      installmentText: `Em até 6x de R$ ${(price / 6).toFixed(2).replace(".", ",")} sem juros`,
-      category: "audio",
-      idealFor: isPremium
-        ? "Silêncio absoluto em viagens, home office exigente e máxima fidelidade musical"
+      image: resolvedImage,
+      tagline: isWired
+        ? `Conexão digital direta USB-C/P2 sem atraso de som, microfone integrado para chamadas e custo-benefício nota ${cbMetric}/100.`
         : hasAnc
-          ? "Isolar barulho de ônibus, academia, estudos e trabalhar com concentração"
-          : "Ouvir música, podcasts e treinar gastando muito pouco",
+          ? `Cancelamento ativo de ruído (${ancScore}/100), graves encorpados e bateria de longa duração.`
+          : `Áudio Bluetooth estável (${soundScore}/100), leveza e ótimo custo-benefício para o dia a dia.`,
+      price,
+      originalPrice: origPrice,
+      installmentText:
+        price < 35
+          ? `R$ ${price.toFixed(2).replace(".", ",")} à vista no Pix ou cartão`
+          : `Em até ${installments}x de R$ ${(price / installments).toFixed(2).replace(".", ",")} sem juros`,
+      category: "audio",
+      idealFor: isWired
+        ? "Chamadas nítidas, vídeos sem atraso, aulas online e praticidade Plug & Play sem depender de bateria"
+        : isPremium
+          ? "Silêncio absoluto em viagens, home office exigente e máxima fidelidade musical"
+          : hasAnc
+            ? "Isolar barulho de ônibus, academia, estudos e trabalhar com concentração"
+            : "Ouvir música, podcasts e treinar gastando muito pouco",
       highlightTitle:
         cbMetric >= 92
           ? `Campeão Custo-Benefício (${cbMetric}/100)`
@@ -815,81 +1342,148 @@ export function heuristicAnalyzeProductInput(
         performance: perfMetric,
         costBenefit: cbMetric,
         battery: batteryScore,
-        mobility: 93,
-        buildQuality: isPremium ? 96 : 88,
+        mobility: 94,
+        buildQuality: isPremium ? 96 : isWired ? 78 : 88,
       },
       specs: [
         {
           key: "anc",
-          label: "Cancelamento de Ruído (ANC)",
+          label: "Isolamento e Cancelamento de Ruído",
           value: isPremium
             ? "ANC Adaptativo de Referência Mundial"
             : hasAnc
               ? "ANC Híbrido Ativo + Modo Transparência"
-              : "Isolamento Acústico Passivo",
+              : "Isolamento Acústico Passivo Intra-Auricular",
           score: ancScore,
           usageNote: hasAnc
             ? "Reduz drasticamente barulho de ar-condicionado, trânsito, academia e conversas ao redor."
-            : "Isola bem pelo encaixe das almofadas, mas não possui cancelamento eletrônico ativo.",
+            : "Atenua ruídos leves pelo encaixe no ouvido, mas não possui cancelamento eletrônico ativo (ANC).",
         },
         {
           key: "sound",
-          label: "Qualidade Sonora e Drivers",
+          label: "Qualidade Sonora e Microfone",
           value: isPremium
             ? "Drivers de Alta Precisão Hi-Res Audio + Equalizador no App"
-            : "Drivers Dinâmicos com Graves Reforçados e Vozes Claras",
+            : isWired
+              ? "Drivers Estéreo com Microfone e Controle de Chamadas no Cabo"
+              : "Drivers Dinâmicos com Graves Reforçados e Vozes Claras",
           score: soundScore,
-          usageNote:
-            "Excelente definição de instrumentos, graves presentes sem embolar e ótima clareza em podcasts.",
+          usageNote: isWired
+            ? "Vozes claras para chamadas no WhatsApp, reuniões, aulas e vídeos do dia a dia."
+            : "Excelente definição de instrumentos, graves presentes sem embolar e ótima clareza em podcasts.",
         },
         {
           key: "battery",
-          label: "Autonomia de Bateria",
-          value: "Longa duração (até 40h–60h) com recarga rápida via USB-C",
+          label: isWired ? "Alimentação e Praticidade" : "Autonomia de Bateria",
+          value: isWired
+            ? "Alimentação Direta via Cabo (Não precisa recarregar bateria)"
+            : "Longa duração (até 40h–60h) com recarga rápida via USB-C",
           score: batteryScore,
-          usageNote: "Dá para usar a semana inteira sem precisar colocar na tomada.",
+          usageNote: isWired
+            ? "Sempre pronto para usar: basta conectar na entrada USB-C do celular, tablet ou notebook."
+            : "Dá para usar a semana inteira sem precisar colocar na tomada.",
         },
         {
           key: "connectivity",
-          label: "Conectividade e Pareamento",
-          value: "Bluetooth 5.3 Multiponto (conecta no PC e celular juntos)",
-          score: 91,
-          usageNote: "Baixa latência para vídeos e troca rápida entre notebook e smartphone.",
+          label: "Conectividade e Compatibilidade",
+          value: isWired
+            ? "Conector USB-C Tipo C Plug & Play (Latência Zero em Vídeos/Jogos)"
+            : "Bluetooth 5.3 Multiponto (conecta no PC e celular juntos)",
+          score: isWired ? 92 : 91,
+          usageNote: isWired
+            ? "Compatível direto com iPhone 15/16 e celulares Android com entrada Tipo C sem precisar de adaptador."
+            : "Baixa latência para vídeos e troca rápida entre notebook e smartphone.",
         },
         {
           key: "weight",
-          label: "Conforto e Peso",
-          value: "Almofadas macias ergonômicas de baixo peso",
-          score: 91,
-          usageNote: "Confortável mesmo para quem usa óculos ou passa muitas horas estudando.",
+          label: "Conforto e Construção",
+          value: isWired
+            ? "Design ultraleve de bolso com botões de volume e atendimento"
+            : "Almofadas macias ergonômicas de baixo peso",
+          score: isWired ? 82 : 91,
+          usageNote: isWired
+            ? "Cabe em qualquer bolso; recomenda-se enrolar com cuidado para preservar o cabo por mais tempo."
+            : "Confortável mesmo para quem usa óculos ou passa muitas horas estudando.",
         },
       ],
-      pros: [
-        hasAnc
-          ? "Cancelamento de ruído eficiente que ajuda muito no foco e estudos"
-          : "Conexão Bluetooth rápida e estável",
-        "Bateria que dura vários dias longe do carregador",
-        `Relação custo-benefício nota ${cbMetric}/100 na categoria de áudio`,
-      ],
-      cons: [
-        isPremium
-          ? "Investimento mais alto voltado ao público exigente"
-          : "Microfone embutido é bom em locais silenciosos, mas capta vento na rua",
-      ],
-      aiReasoning: `Avaliação técnica de áudio: ANC (${ancScore}/100), Som (${soundScore}/100), Bateria (${batteryScore}/100) e Custo-Benefício (${cbMetric}/100).`,
+      pros: isWired
+        ? [
+            "Conexão direta USB-C Plug & Play sem atraso de som e sem precisar carregar bateria",
+            "Microfone integrado no cabo com botões para atender chamadas e controlar volume",
+            `Custo-benefício imbatível (nota ${cbMetric}/100) pelo valor de R$ ${price.toFixed(2).replace(".", ",")}`,
+          ]
+        : [
+            hasAnc
+              ? "Cancelamento de ruído eficiente que ajuda muito no foco e estudos"
+              : "Conexão Bluetooth rápida e estável",
+            "Bateria que dura vários dias longe do carregador",
+            `Relação custo-benefício nota ${cbMetric}/100 na categoria de áudio`,
+          ],
+      cons: isWired
+        ? [
+            "Por ser um fone básico com fio, não possui cancelamento ativo de ruído (ANC) e exige cuidado ao puxar o cabo",
+          ]
+        : [
+            isPremium
+              ? "Investimento mais alto voltado ao público exigente"
+              : "Microfone embutido é bom em locais silenciosos, mas capta vento na rua",
+          ],
+      aiReasoning: `Avaliação técnica de áudio (${brand}): Som (${soundScore}/100), Isolamento (${ancScore}/100), Conectividade (${isWired ? 92 : 91}/100) e Custo-Benefício (${cbMetric}/100) pelo valor de R$ ${price.toFixed(2).replace(".", ",")}.`,
     };
   }
 
   // ============================================================================
-  // 4. MONITORES, PERIFÉRICOS & QUALQUER OUTRO PRODUTO DO CATÁLOGO
+  // 4. MONITORES, CADEIRAS, SMARTWATCHES, ELETROS, GAMES & PERIFÉRICOS EM GERAL
   // ============================================================================
   const isMonitor =
     lower.includes("monitor") ||
     lower.includes("ultragear") ||
     lower.includes("odyssey") ||
+    lower.includes("smart tv") ||
+    lower.includes("televisão") ||
+    lower.includes("televisao") ||
     lower.includes("144hz") ||
     lower.includes("180hz") ||
     lower.includes("240hz");
+
+  const isChair =
+    lower.includes("cadeira") ||
+    lower.includes("ergonômica") ||
+    lower.includes("ergonomica") ||
+    lower.includes("poltrona");
+
+  const isSmartwatch =
+    lower.includes("smartwatch") ||
+    lower.includes("relógio") ||
+    lower.includes("relogio") ||
+    lower.includes("miband") ||
+    lower.includes("mi band") ||
+    lower.includes("amazfit") ||
+    lower.includes("galaxy fit") ||
+    lower.includes("galaxy watch") ||
+    lower.includes("apple watch");
+
+  const isAppliance =
+    lower.includes("airfryer") ||
+    lower.includes("air fryer") ||
+    lower.includes("fritadeira") ||
+    lower.includes("cafeteira") ||
+    lower.includes("aspirador") ||
+    lower.includes("liquidificador") ||
+    lower.includes("panela") ||
+    lower.includes("ventilador") ||
+    lower.includes("ar condicionado") ||
+    lower.includes("micro-ondas") ||
+    lower.includes("microondas");
+
+  const isConsoleOrGame =
+    lower.includes("playstation") ||
+    lower.includes("ps5") ||
+    lower.includes("xbox") ||
+    lower.includes("nintendo switch") ||
+    lower.includes("controle") ||
+    lower.includes("dualshock") ||
+    lower.includes("dualsense");
 
   const isProTier =
     lower.includes("pro") ||
@@ -900,53 +1494,118 @@ export function heuristicAnalyzeProductInput(
     lower.includes("sem fio") ||
     lower.includes("180hz") ||
     lower.includes("240hz") ||
-    lower.includes("ips");
+    lower.includes("ips") ||
+    lower.includes("4k") ||
+    lower.includes("digital") ||
+    lower.includes("inox");
 
-  const defaultPrice = isMonitor ? 899 : 349;
+  const defaultPrice = isMonitor
+    ? 899
+    : isChair
+      ? 799
+      : isSmartwatch
+        ? 299
+        : isAppliance
+          ? 389
+          : isConsoleOrGame
+            ? 399
+            : 299;
   const price = detectedPrice || defaultPrice;
-  const basePerf = isProTier ? 92 : 84;
+  const basePerf = isProTier ? 92 : 85;
   const cbScore = clampScore(
-    basePerf * 0.55 + Math.min(100, (defaultPrice / Math.max(100, price)) * 88) * 0.45,
+    basePerf * 0.55 + Math.min(100, (defaultPrice / Math.max(80, price)) * 88) * 0.45,
   );
 
+  const firstWord = cleanTitle.split(" ")[0] ?? "";
+  const secondWord = cleanTitle.split(" ")[1] ?? "";
+  const genericFirstWords = new Set([
+    "kit",
+    "novo",
+    "nova",
+    "original",
+    "promoção",
+    "oferta",
+    "fone",
+    "cadeira",
+    "monitor",
+    "teclado",
+    "mouse",
+    "fritadeira",
+    "cafeteira",
+    "aspirador",
+    "relógio",
+    "relogio",
+    "smartwatch",
+    "controle",
+  ]);
   const brand =
-    cleanTitle.split(" ")[0]?.length >= 2
-      ? cleanTitle.split(" ")[0]
-      : isMonitor
-        ? "LG"
-        : "Logitech";
+    firstWord.length >= 2 && !genericFirstWords.has(firstWord.toLowerCase())
+      ? firstWord
+      : secondWord.length >= 2
+        ? secondWord
+        : isMonitor
+          ? "LG"
+          : "Seleção";
+
   const name =
-    cleanTitle.length > 5
-      ? cleanTitle.slice(0, 62)
-      : isMonitor
-        ? 'Monitor Gamer 24" IPS Full HD 180Hz'
-        : "Periférico Selecionado de Alta Precisão";
+    cleanTitle.length >= 4
+      ? cleanTitle.slice(0, 72)
+      : "Produto Selecionado do Catálogo";
   const shortName = name.split(" ").slice(0, 4).join(" ");
+
+  let suggestedNewCategory: AiProductDraft["suggestedNewCategory"] | undefined;
+  if (isMonitor) {
+    suggestedNewCategory = {
+      id: "monitores",
+      label: "Monitores & Telas",
+      description: "Taxa de atualização (Hz), painel IPS/VA, resolução e fidelidade de cores",
+    };
+  } else if (isChair) {
+    suggestedNewCategory = {
+      id: "cadeiras",
+      label: "Cadeiras & Ergonomia",
+      description: "Ajuste lombar, tela mesh respirável, pistão e conforto para longas jornadas",
+    };
+  } else if (isSmartwatch) {
+    suggestedNewCategory = {
+      id: "smartwatches",
+      label: "Smartwatches & Fitness",
+      description: "Tela, GPS, sensores de saúde e duração de bateria",
+    };
+  } else if (isAppliance) {
+    suggestedNewCategory = {
+      id: "casa-eletro",
+      label: "Casa & Eletroportáteis",
+      description: "Potência, capacidade em litros, consumo de energia e praticidade",
+    };
+  } else if (isConsoleOrGame) {
+    suggestedNewCategory = {
+      id: "games",
+      label: "Games & Controles",
+      description: "Desempenho, precisão dos comandos, conectividade e bateria",
+    };
+  }
 
   return {
     name,
     shortName,
     brand,
-    tagline: isMonitor
-      ? "Painel de alta fluidez com cores fiéis, baixo tempo de resposta e ótimo conforto visual."
-      : `Construção sólida (${basePerf}/100), excelente ergonomia e nota ${cbScore}/100 em custo-benefício.`,
+    image: resolvedImage,
+    tagline: `${name} — analisado com nota técnica ${basePerf}/100 e índice de custo-benefício ${cbScore}/100 para sua faixa de preço.`,
     price,
-    originalPrice: Math.round(price * 1.2),
+    originalPrice: Math.round(price * 1.18),
     installmentText: `Em até 10x de R$ ${(price / 10).toFixed(2).replace(".", ",")} sem juros`,
     category: "perifericos",
-    ...(isMonitor
-      ? {
-          suggestedNewCategory: {
-            id: "monitores",
-            label: "Monitores & Telas",
-            description:
-              "Taxa de atualização (Hz), painel IPS/VA, resolução e fidelidade de cores",
-          },
-        }
-      : {}),
+    ...(suggestedNewCategory ? { suggestedNewCategory } : {}),
     idealFor: isMonitor
       ? "Jogos competitivos, segundo monitor para notebook, home office e edição"
-      : "Produtividade diária, digitação confortável, jogos e organização da mesa",
+      : isChair
+        ? "Trabalhar ou estudar por horas com postura correta e alívio na coluna lombar"
+        : isSmartwatch
+          ? "Monitorar treinos, notificações no pulso, sono e saúde com bateria duradoura"
+          : isAppliance
+            ? "Praticidade e rapidez no dia a dia em casa com baixo consumo e fácil limpeza"
+            : "Uso diário com excelente durabilidade, precisão e ótimo custo-benefício",
     highlightTitle:
       cbScore >= 90
         ? `Custo-Benefício Nota ${cbScore}/100`
@@ -954,55 +1613,66 @@ export function heuristicAnalyzeProductInput(
     metrics: {
       performance: basePerf,
       costBenefit: cbScore,
-      battery: 90,
-      mobility: 86,
+      battery: 89,
+      mobility: 87,
       buildQuality: isProTier ? 93 : 86,
     },
     specs: [
       {
         key: "switches",
-        label: isMonitor ? "Painel e Taxa de Atualização" : "Tecnologia Principal / Switches",
+        label: isMonitor
+          ? "Painel e Qualidade de Imagem"
+          : isChair
+            ? "Ergonomia e Suporte Lombar"
+            : isAppliance
+              ? "Potência e Capacidade"
+              : "Desempenho Principal",
         value: isMonitor
-          ? "Painel IPS Full HD de Alta Taxa de Atualização (1ms)"
-          : "Componentes de alta durabilidade e resposta rápida",
+          ? "Painel de alta definição e resposta rápida"
+          : isChair
+            ? "Encosto ergonômico respirável com ajustes de postura"
+            : isAppliance
+              ? `Alta eficiência térmica e excelente capacidade (${shortName})`
+              : `Especificação principal de alto rendimento (${shortName})`,
         score: basePerf,
-        usageNote: isMonitor
-          ? "Garante imagem fluida sem borrões e cores que não distorcem ao olhar de lado."
-          : "Resposta imediata e macia para trabalhar ou jogar por horas seguidas.",
+        usageNote:
+          "Entrega desempenho consistente e confiável para a proposta principal do produto.",
       },
       {
         key: "construction",
-        label: "Construção e Acabamento",
-        value: "Estrutura reforçada de alta durabilidade para uso diário intenso",
-        score: isProTier ? 92 : 85,
-        usageNote: "Materiais resistentes que não desgastam facilmente com o uso contínuo.",
+        label: "Construção e Durabilidade",
+        value: "Materiais resistentes dimensionados para uso diário contínuo",
+        score: isProTier ? 92 : 86,
+        usageNote: "Boa qualidade de acabamento e vida útil prolongada.",
       },
       {
         key: "connectivity",
-        label: "Conectividade e Compatibilidade",
-        value: isMonitor
-          ? "HDMI + DisplayPort + Padrão VESA para suporte articulado"
-          : "Compatível com Windows, macOS, Android e iOS (Plug & Play)",
-        score: 91,
-        usageNote: "Fácil de conectar em qualquer computador ou setup sem complicação.",
+        label: isAppliance || isChair ? "Praticidade e Recursos" : "Conectividade e Compatibilidade",
+        value: isAppliance
+          ? "Fácil higienização e operação intuitiva no dia a dia"
+          : isChair
+            ? "Rodízios silenciosos e pistão de alta resistência"
+            : "Ampla compatibilidade e instalação simples",
+        score: 90,
+        usageNote: "Muito prático de usar desde o primeiro dia sem complicação.",
       },
       {
         key: "battery",
-        label: "Eficiência e Ergonomia",
-        value: "Design ergonômico projetado para longas jornadas sem fadiga",
-        score: 90,
-        usageNote: "Melhora o conforto na bancada e evita cansaço após horas de uso.",
+        label: "Eficiência e Custo-Benefício",
+        value: `Excelente retorno pelo investimento de R$ ${price.toLocaleString("pt-BR")}`,
+        score: cbScore,
+        usageNote: "Se destaca pelo equilíbrio entre preço cobrado e qualidade entregue.",
       },
     ],
     pros: [
-      `Excelente nota técnica (${basePerf}/100) dentro da faixa de R$ ${price}`,
-      "Acabamento durável e pronto para uso intenso no trabalho ou lazer",
-      "Alta compatibilidade com qualquer notebook ou computador atual",
+      `Ótima avaliação técnica (${basePerf}/100) para o modelo ${shortName}`,
+      `Índice de custo-benefício de ${cbScore}/100 considerando o valor de R$ ${price}`,
+      "Boa qualidade de construção e alta aprovação entre compradores",
     ],
     cons: [
-      "Alta procura costuma esgotar os lotes promocionais rapidamente",
+      "Estoque promocional pode variar conforme o lote da loja",
     ],
-    aiReasoning: `Análise técnica estruturada automaticamente: Desempenho (${basePerf}/100) e Custo-Benefício (${cbScore}/100) calibrados para comparação direta no site.`,
+    aiReasoning: `Produto "${name}" identificado e estruturado com métricas técnicas (${basePerf}/100) e custo-benefício (${cbScore}/100) para comparação direta no site.`,
   };
 }
 

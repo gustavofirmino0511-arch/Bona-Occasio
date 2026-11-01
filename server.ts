@@ -6,6 +6,7 @@ import { createServer as createViteServer } from "vite";
 import {
   heuristicAnalyzeProductInput,
   heuristicSuggestCategories,
+  resolveProductUrlContent,
 } from "./src/lib/aiCurator";
 import type {
   AiCatalogAdviceResponse,
@@ -137,10 +138,30 @@ async function startServer() {
       return;
     }
 
+    const resolvedMeta = await resolveProductUrlContent(rawInput);
+    const hasExtraUserText =
+      rawInput.replace(/https?:\/\/[^\s"'<>]+/gi, "").trim().length >= 4;
+
+    if (resolvedMeta.isShortenerBlocked && !hasExtraUserText) {
+      res.status(422).json({
+        error:
+          "A loja bloqueou a leitura automática deste link encurtado. Digite o Nome/Modelo do produto no campo abaixo (ex: Notebook Acer Nitro V15 ou Fone JBL Tune 520BT) junto com o seu link!",
+        shortenerBlocked: true,
+      });
+      return;
+    }
+
+    const effectivePrice =
+      priceHint && priceHint > 0 ? priceHint : resolvedMeta.detectedPrice;
+
     const ai = getGeminiClient();
     if (!ai) {
-      const draft = heuristicAnalyzeProductInput(rawInput, priceHint);
-      res.json({ draft, source: "smart-engine" });
+      const draft = heuristicAnalyzeProductInput(
+        rawInput,
+        effectivePrice,
+        resolvedMeta,
+      );
+      res.json({ draft, source: "smart-engine", resolvedMeta });
       return;
     }
 
@@ -151,23 +172,27 @@ async function startServer() {
         .join(", ");
 
       const systemInstruction = `Você é o especialista-chefe de curadoria técnica e afiliados do site brasileiro Bona Occasio.
-O usuário enviará um link de produto (ex: Shopee, Mercado Livre, Amazon) ou o nome/descrição de um produto.
-Sua tarefa é estruturar esse produto em português do Brasil para entrar no nosso catálogo e no nosso comparador lado a lado.
+O usuário enviará um link de produto (ex: Shopee, Mercado Livre, Amazon) e/ou o nome/descrição de um produto.
+Sua tarefa é estruturar EXATAMENTE esse produto em português do Brasil para entrar no nosso catálogo e no nosso comparador lado a lado. NUNCA invente outro produto diferente do informado.
 
 Em CADA item de "specs", preencha obrigatoriamente "usageNote" explicando em linguagem humana e direta para que aquele componente é melhor ou se ele não é tão bom (ex: "Essa placa de vídeo é melhor para jogos pesados e 3D", "A câmera não é tão boa em pouca luz, mas atende chamadas", "Esse processador ganha em multitarefa").
 
 Regras importantes para as especificações (specs) de acordo com a categoria para manter o alinhamento na tabela comparativa:
 - Se category for "notebooks", use exatamente as keys: "processor" (Processador (CPU)), "gpu" (Placa de Vídeo (GPU)), "ram" (Memória RAM), "storage" (Armazenamento SSD), "screen" (Tela e Qualidade de Imagem), "camera" (Câmera (Webcam) e Áudio), "battery" (Autonomia Média de Bateria), "weight" (Peso e Portabilidade).
-- Se category for "smartphones", use exatamente as keys: "processor" (Processador (CPU)), "gpu" (Placa Gráfica (GPU)), "camera" (Conjunto de Câmeras), "ram" (Memória RAM), "storage" (Armazenamento), "screen" (Tela e Brilho), "battery" (Bateria e Proteção).
+- Se category for "smartphones", use exatamente as keys: "processor" (Processador (CPU)), "gpu" (Câmeras e Gravação), "ram" (Memória RAM), "storage" (Armazenamento), "screen" (Tela e Brilho), "battery" (Bateria e Recarga).
 - Se category for "audio", use exatamente as keys: "anc" (Cancelamento de Ruído (ANC)), "sound" (Qualidade Sonora e Drivers), "battery" (Autonomia de Bateria), "connectivity" (Conectividade e Pareamento), "weight" (Conforto e Peso).
 - Se category for "perifericos" ou outra categoria, use keys padronizadas como "switches", "construction", "connectivity", "battery".
 
 Categorias atuais disponíveis: ${catList || "notebooks, smartphones, audio, perifericos"}.
-Se o produto pertencer claramente a uma categoria nova que ainda não existe (ex: Monitores, Cadeiras Ergonômicas, Smartwatches, Casa Inteligente), preencha também "suggestedNewCategory" com id, label e description.`;
+Se o produto pertencer claramente a uma categoria nova que ainda não existe (ex: Monitores, Cadeiras Ergonômicas, Smartwatches, Casa & Eletroportáteis, Games & Controles), preencha também "suggestedNewCategory" com id, label e description.`;
 
       const prompt = `Analise o seguinte produto enviado pelo afiliado:
-Entrada: "${rawInput}"
-${priceHint ? `Preço informado: R$ ${priceHint}` : "Se o preço não estiver explícito, estime o preço médio real no Brasil em reais (BRL)."}`;
+Entrada do usuário: "${rawInput}"
+${resolvedMeta.title ? `Título extraído da página do link: "${resolvedMeta.title}"` : ""}
+${resolvedMeta.finalUrl ? `URL final descurtada: "${resolvedMeta.finalUrl}"` : ""}
+${resolvedMeta.description ? `Descrição da página: "${resolvedMeta.description}"` : ""}
+${resolvedMeta.contentSnippet ? `Trecho técnico da página: "${resolvedMeta.contentSnippet.slice(0, 900)}"` : ""}
+${effectivePrice ? `Preço informado/detectado: R$ ${effectivePrice}` : "Se o preço não estiver explícito, estime o preço médio real no Brasil em reais (BRL)."}`;
 
       const response = await withTimeout(
         ai.models.generateContent({
@@ -275,19 +300,30 @@ ${priceHint ? `Preço informado: R$ ${priceHint}` : "Se o preço não estiver ex
 
       const parsed = JSON.parse(response.text ?? "{}") as AiProductDraft;
       if (!parsed.name || !Array.isArray(parsed.specs) || parsed.specs.length === 0) {
-        const fallback = heuristicAnalyzeProductInput(rawInput, priceHint);
-        res.json({ draft: fallback, source: "smart-engine" });
+        const fallback = heuristicAnalyzeProductInput(
+          rawInput,
+          effectivePrice,
+          resolvedMeta,
+        );
+        res.json({ draft: fallback, source: "smart-engine", resolvedMeta });
         return;
       }
 
-      if (priceHint && priceHint > 0) {
-        parsed.price = priceHint;
+      if (effectivePrice && effectivePrice > 0) {
+        parsed.price = effectivePrice;
+      }
+      if (resolvedMeta.imageUrl && !parsed.image) {
+        parsed.image = resolvedMeta.imageUrl;
       }
 
-      res.json({ draft: parsed, source: "gemini" });
+      res.json({ draft: parsed, source: "gemini", resolvedMeta });
     } catch {
-      const fallback = heuristicAnalyzeProductInput(rawInput, priceHint);
-      res.json({ draft: fallback, source: "smart-engine" });
+      const fallback = heuristicAnalyzeProductInput(
+        rawInput,
+        effectivePrice,
+        resolvedMeta,
+      );
+      res.json({ draft: fallback, source: "smart-engine", resolvedMeta });
     }
   });
 

@@ -24,6 +24,7 @@ import {
   buildProductFromAiDraft,
   heuristicAnalyzeProductInput,
   heuristicSuggestCategories,
+  resolveProductUrlContent,
 } from "@/lib/aiCurator";
 import { OWNER_EMAIL } from "@/lib/firebase";
 import { cn, formatBRL } from "@/lib/utils";
@@ -85,10 +86,14 @@ export function AiStudio() {
   const [passChangedFeedback, setPassChangedFeedback] = useState(false);
 
   // Estado do Importador de Produto por Link/Texto
+  const [productTitleHint, setProductTitleHint] = useState("");
   const [rawInput, setRawInput] = useState("");
   const [priceHint, setPriceHint] = useState("");
   const [affiliateUrl, setAffiliateUrl] = useState("");
   const [isAnalyzingProduct, setIsAnalyzingProduct] = useState(false);
+  const [analyzingStepText, setAnalyzingStepText] = useState(
+    "Lendo link da loja e analisando ficha técnica...",
+  );
   const [isPublishingProduct, setIsPublishingProduct] = useState(false);
   const [productError, setProductError] = useState<string | null>(null);
   const [draft, setDraft] = useState<AiProductDraft | null>(null);
@@ -155,16 +160,27 @@ export function AiStudio() {
 
   const handleAnalyzeProduct = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!rawInput.trim()) {
+    const combinedInput = [productTitleHint.trim(), rawInput.trim(), affiliateUrl.trim()]
+      .filter(Boolean)
+      .join(" ");
+
+    if (!combinedInput.trim()) {
       setProductError(
-        "Cole o link do produto ou digite o nome/modelo para a IA estruturar.",
+        "Digite o nome/modelo do produto ou cole o link do anúncio para a IA estruturar.",
       );
       return;
+    }
+
+    // Se o usuário colou um link no campo principal e deixou o link de afiliado em branco, preenche automaticamente
+    const detectedUrlInRaw = rawInput.match(/https?:\/\/[^\s"'<>]+/i)?.[0];
+    if (detectedUrlInRaw && !affiliateUrl.trim()) {
+      setAffiliateUrl(detectedUrlInRaw);
     }
 
     setProductError(null);
     setPublishedSuccessId(null);
     setIsAnalyzingProduct(true);
+    setAnalyzingStepText("Abrindo link e extraindo informações do anúncio...");
 
     const numericPrice = priceHint
       ? Number(priceHint.replace(/\./g, "").replace(",", "."))
@@ -175,13 +191,23 @@ export function AiStudio() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          rawInput,
+          rawInput: combinedInput,
           priceHint: numericPrice,
           existingCategories: catalogCategories,
         }),
       });
 
       const contentType = res.headers.get("content-type") ?? "";
+      if (res.status === 422 && contentType.includes("application/json")) {
+        const errData = (await res.json()) as { error?: string };
+        setDraft(null);
+        setProductError(
+          errData.error ||
+            "A loja bloqueou a leitura automática deste link encurtado. Preencha o campo 'Nome / Modelo do Produto' logo abaixo (ex: Fone JBL Tune 520BT) junto com o seu link!",
+        );
+        return;
+      }
+
       if (res.ok && contentType.includes("application/json")) {
         const data = (await res.json()) as {
           draft?: AiProductDraft;
@@ -189,21 +215,71 @@ export function AiStudio() {
         };
         if (data.draft) {
           setDraft(data.draft);
+          if (!productTitleHint.trim() && data.draft.name) {
+            setProductTitleHint(data.draft.name);
+          }
+          if (!priceHint.trim() && data.draft.price) {
+            setPriceHint(String(data.draft.price).replace(".", ","));
+          }
           setUseSuggestedNewCategory(Boolean(data.draft.suggestedNewCategory));
           return;
         }
       }
 
+      // Se estiver rodando no Render Static Site (sem backend Node), fazemos a leitura real da URL direto pelo navegador!
+      setAnalyzingStepText("Lendo página do produto e calculando notas de 0 a 100...");
+      const resolvedMeta = await resolveProductUrlContent(combinedInput);
+      const hasTypedProductName =
+        productTitleHint.trim().length >= 3 ||
+        rawInput.replace(/https?:\/\/[^\s"'<>]+/gi, "").trim().length >= 4;
+
+      if (resolvedMeta.isShortenerBlocked && !hasTypedProductName) {
+        setDraft(null);
+        setProductError(
+          "Este link encurtado (Shopee / Amazon / ML) tem proteção anti-robô que esconde o nome do produto. Basta digitar o Nome / Modelo do produto no primeiro campo abaixo (ex: Notebook Lenovo IdeaPad i5 16GB) que a IA monta toda a ficha técnica dele na hora!",
+        );
+        return;
+      }
+
+      if (!productTitleHint.trim() && resolvedMeta.title) {
+        setProductTitleHint(resolvedMeta.title);
+      }
+      if (!priceHint.trim() && resolvedMeta.detectedPrice) {
+        setPriceHint(String(resolvedMeta.detectedPrice).replace(".", ","));
+      }
+
       const fallbackDraft = heuristicAnalyzeProductInput(
-        rawInput,
+        combinedInput,
         numericPrice,
+        resolvedMeta,
       );
       setDraft(fallbackDraft);
       setUseSuggestedNewCategory(Boolean(fallbackDraft.suggestedNewCategory));
     } catch {
+      const resolvedMeta = await resolveProductUrlContent(combinedInput);
+      const hasTypedProductName =
+        productTitleHint.trim().length >= 3 ||
+        rawInput.replace(/https?:\/\/[^\s"'<>]+/gi, "").trim().length >= 4;
+
+      if (resolvedMeta.isShortenerBlocked && !hasTypedProductName) {
+        setDraft(null);
+        setProductError(
+          "Este link encurtado tem proteção anti-robô da loja. Digite o Nome / Modelo do produto no primeiro campo abaixo para a IA montar a ficha exata dele!",
+        );
+        return;
+      }
+
+      if (!productTitleHint.trim() && resolvedMeta.title) {
+        setProductTitleHint(resolvedMeta.title);
+      }
+      if (!priceHint.trim() && resolvedMeta.detectedPrice) {
+        setPriceHint(String(resolvedMeta.detectedPrice).replace(".", ","));
+      }
+
       const fallbackDraft = heuristicAnalyzeProductInput(
-        rawInput,
+        combinedInput,
         numericPrice,
+        resolvedMeta,
       );
       setDraft(fallbackDraft);
       setUseSuggestedNewCategory(Boolean(fallbackDraft.suggestedNewCategory));
@@ -506,6 +582,7 @@ export function AiStudio() {
                     key={ex.label}
                     type="button"
                     onClick={() => {
+                      setProductTitleHint(ex.label.replace(/^Link\s+/i, ""));
                       setRawInput(ex.input);
                       setPriceHint(ex.price);
                       setAffiliateUrl(ex.affiliateUrl);
@@ -522,46 +599,31 @@ export function AiStudio() {
             <form onSubmit={handleAnalyzeProduct} className="mt-6 space-y-4">
               <div>
                 <label
-                  htmlFor="ai-product-input"
+                  htmlFor="ai-product-title-hint"
                   className="block text-xs font-semibold text-forest"
                 >
-                  Link do produto (Shopee, Mercado Livre, Amazon) ou Nome +
-                  Especificações
+                  1. Nome / Modelo do Produto (copie o título do anúncio na loja)
                 </label>
-                <textarea
-                  id="ai-product-input"
-                  rows={3}
-                  value={rawInput}
-                  onChange={(e) => setRawInput(e.target.value)}
-                  placeholder="Ex: https://shopee.com.br/Notebook-Dell-Inspiron-15-Core-i5-16GB-SSD-512GB ou digite o modelo..."
-                  className="mt-1.5 w-full rounded-xl border border-sand bg-cream/60 px-4 py-3 text-sm text-ink placeholder:text-stone/60 focus:border-forest focus:outline-none"
+                <input
+                  id="ai-product-title-hint"
+                  type="text"
+                  value={productTitleHint}
+                  onChange={(e) => setProductTitleHint(e.target.value)}
+                  placeholder="Ex: Notebook Acer Nitro V15 Core i5 RTX 4050 16GB SSD 512GB..."
+                  className="mt-1.5 w-full rounded-xl border border-sand bg-cream/60 px-4 py-2.5 text-sm text-ink placeholder:text-stone/60 focus:border-forest focus:outline-none"
                 />
+                <span className="mt-1 block text-[11px] text-stone">
+                  Dica: Links curtos da Shopee/Amazon (`s.shopee.com.br` / `amzn.to`) às vezes bloqueiam robôs. Colando o título do anúncio aqui, a IA identifica 100% o modelo exato!
+                </span>
               </div>
 
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <label
-                    htmlFor="ai-product-price"
-                    className="block text-xs font-semibold text-forest"
-                  >
-                    Preço da Oferta em R$ (opcional)
-                  </label>
-                  <input
-                    id="ai-product-price"
-                    type="text"
-                    value={priceHint}
-                    onChange={(e) => setPriceHint(e.target.value)}
-                    placeholder="Ex: 3399"
-                    className="mt-1.5 w-full rounded-xl border border-sand bg-cream/60 px-4 py-2.5 text-sm text-ink placeholder:text-stone/60 focus:border-forest focus:outline-none"
-                  />
-                </div>
-
-                <div>
-                  <label
                     htmlFor="ai-affiliate-url"
                     className="block text-xs font-semibold text-forest"
                   >
-                    Seu Link de Afiliado (para o botão de compra)
+                    2. Seu Link de Afiliado (para o botão de compra)
                   </label>
                   <div className="relative mt-1.5">
                     <input
@@ -575,12 +637,50 @@ export function AiStudio() {
                     <Link2 className="pointer-events-none absolute top-3 left-3 size-4 text-stone" />
                   </div>
                 </div>
+
+                <div>
+                  <label
+                    htmlFor="ai-product-price"
+                    className="block text-xs font-semibold text-forest"
+                  >
+                    3. Preço da Oferta em R$
+                  </label>
+                  <input
+                    id="ai-product-price"
+                    type="text"
+                    value={priceHint}
+                    onChange={(e) => setPriceHint(e.target.value)}
+                    placeholder="Ex: 3399"
+                    className="mt-1.5 w-full rounded-xl border border-sand bg-cream/60 px-4 py-2.5 text-sm text-ink placeholder:text-stone/60 focus:border-forest focus:outline-none"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label
+                  htmlFor="ai-product-input"
+                  className="block text-xs font-semibold text-forest"
+                >
+                  4. Especificações extras ou Link completo da página (opcional)
+                </label>
+                <textarea
+                  id="ai-product-input"
+                  rows={2}
+                  value={rawInput}
+                  onChange={(e) => setRawInput(e.target.value)}
+                  placeholder="Opcional: cole detalhes extras da descrição do anúncio (processador, RAM, tela) ou o link longo da loja..."
+                  className="mt-1.5 w-full rounded-xl border border-sand bg-cream/60 px-4 py-2.5 text-sm text-ink placeholder:text-stone/60 focus:border-forest focus:outline-none"
+                />
               </div>
 
               {productError && (
-                <p role="alert" className="text-xs font-medium text-copper">
+                <div
+                  role="alert"
+                  className="rounded-xl border border-copper/50 bg-copper/10 p-3.5 text-xs font-medium leading-relaxed text-ink"
+                >
+                  <strong className="text-copper">Atenção: </strong>
                   {productError}
-                </p>
+                </div>
               )}
 
               <button
@@ -591,7 +691,7 @@ export function AiStudio() {
                 {isAnalyzingProduct ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
-                    Analisando ficha técnica, categoria e custo-benefício...
+                    {analyzingStepText}
                   </>
                 ) : (
                   <>
@@ -755,6 +855,28 @@ export function AiStudio() {
                         className="mt-1 w-full rounded-lg border border-sand bg-white px-3 py-2 font-mono text-sm font-bold text-forest tabular-nums"
                       />
                     </div>
+                  </div>
+
+                  <div>
+                    <label
+                      htmlFor="draft-image-edit"
+                      className="block text-xs font-semibold text-forest"
+                    >
+                      URL da Foto do Produto (opcional — deixe em branco para usar Ilustração de Estúdio automática)
+                    </label>
+                    <input
+                      id="draft-image-edit"
+                      type="text"
+                      value={draft.image ?? ""}
+                      onChange={(e) =>
+                        setDraft({
+                          ...draft,
+                          image: e.target.value.trim() || undefined,
+                        })
+                      }
+                      placeholder="https://... (ou clique com botão direito na foto da loja > Copiar endereço da imagem)"
+                      className="mt-1 w-full rounded-lg border border-sand bg-white px-3 py-2 text-xs text-ink"
+                    />
                   </div>
 
                   <div>
