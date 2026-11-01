@@ -1,43 +1,51 @@
+import { Link } from "react-router-dom";
+
 export function Footer() {
   return (
-    <footer id="sobre" className="mt-24 border-t border-sand">
-      <div className="mx-auto grid max-w-6xl gap-10 px-5 py-14 sm:grid-cols-3 sm:px-8">
+    <footer className="mt-20 border-t border-sand bg-cream">
+      <div className="mx-auto grid max-w-6xl gap-10 px-5 py-12 sm:grid-cols-3 sm:px-8">
         <div>
-          {/* Logo sem o ponto final */}
           <p className="font-display text-lg font-semibold text-forest">
             Bona Occasio
           </p>
-          <p className="mt-3 max-w-xs text-sm text-stone">
-            Um catálogo enxuto de produtos que recomendamos de verdade. Os
-            links desta página são de afiliado.
+          <p className="mt-3 max-w-xs text-xs leading-relaxed text-stone">
+            Curadoria técnica e comparador de custo-benefício. Toda a análise é
+            feita dentro do nosso site para você decidir com segurança.
           </p>
         </div>
 
         <div>
-          <p className="text-xs font-semibold tracking-widest text-forest uppercase">
-            Navegar
-          </p>
-          <ul className="mt-4 space-y-2 text-sm text-stone">
+          <p className="text-xs font-semibold text-forest">Navegação</p>
+          <ul className="mt-3 space-y-2 text-xs text-stone">
             <li>
-              <a href="/catalogo" className="hover:text-copper">
-                Catálogo
-              </a>
+              <Link to="/" className="hover:text-copper">
+                Início
+              </Link>
             </li>
             <li>
-              <a href="/sobre" className="hover:text-copper">
-                Sobre
-              </a>
+              <Link to="/comparar" className="hover:text-copper">
+                Comparador Lado a Lado
+              </Link>
+            </li>
+            <li>
+              <Link to="/catalogo" className="hover:text-copper">
+                Catálogo de Produtos
+              </Link>
+            </li>
+            <li>
+              <Link to="/sobre" className="hover:text-copper">
+                Como Escolhemos
+              </Link>
             </li>
           </ul>
         </div>
 
         <div>
-          <p className="text-xs font-semibold tracking-widest text-forest uppercase">
-            Transparência
-          </p>
-          <p className="mt-4 text-sm text-stone">
-            Podemos receber comissão por compras feitas através dos links.
-            Isso não altera o preço para você.
+          <p className="text-xs font-semibold text-forest">Transparência</p>
+          <p className="mt-3 text-xs leading-relaxed text-stone">
+            Os links de compra nos produtos são links de afiliado. Podemos
+            receber comissão por compras qualificadas sem qualquer custo
+            adicional para você.
           </p>
         </div>
       </div>

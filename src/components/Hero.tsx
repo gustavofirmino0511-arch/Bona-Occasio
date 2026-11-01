@@ -1,11 +1,11 @@
-import { ArrowRight } from "lucide-react";
+import { Link } from "react-router-dom";
+import { ArrowRight, Scale } from "lucide-react";
 
 export function Hero() {
   return (
-    <section id="top" className="relative overflow-hidden">
-      {/* textura sutil de fundo */}
+    <section id="top" className="relative overflow-hidden border-b border-sand">
       <div
-        aria-hidden
+        aria-hidden="true"
         className="pointer-events-none absolute inset-0 -z-10 opacity-[0.06]"
         style={{
           backgroundImage:
@@ -13,45 +13,47 @@ export function Hero() {
         }}
       />
 
-      <div className="mx-auto max-w-4xl px-5 pt-20 pb-16 text-center sm:px-8 sm:pt-28 sm:pb-24">
-        {/* O texto "Boas oportunidades, bem escolhidas" foi removido daqui */}
+      <div className="mx-auto max-w-4xl px-5 pt-16 pb-16 text-center sm:px-8 sm:pt-24 sm:pb-20">
+        <p className="text-xs font-medium text-copper">
+          Curadoria Independente · Amazon · Mercado Livre · Shopee
+        </p>
 
         <h1
-          className="animate-fade-up font-display text-[clamp(2.5rem,7vw,4.75rem)] leading-[1.02] font-semibold tracking-tight text-forest"
-          style={{ animationDelay: "60ms" }}
+          className="animate-fade-up mt-4 font-display text-[clamp(2.25rem,5.5vw,4.25rem)] leading-[1.06] font-semibold tracking-tight text-forest"
+          style={{ textWrap: "balance" }}
         >
-          As melhores
-          <br />
-          oportunidades,
-          <br />
-          <span className="italic text-copper">para você.</span>
+          Boas oportunidades,{" "}
+          <span className="italic text-copper">comparadas no detalhe.</span>
         </h1>
 
         <p
-          className="animate-fade-up mx-auto mt-7 max-w-xl text-base text-stone sm:text-lg"
-          style={{ animationDelay: "120ms" }}
+          className="animate-fade-up mx-auto mt-6 max-w-2xl text-base leading-relaxed text-stone sm:text-lg"
+          style={{ animationDelay: "80ms" }}
         >
-          Uma seleção enxuta de produtos que valem a pena — com preços e
-          condições atualizados para você decidir bem.
+          Não escolha no escuro. Comparamos processador, placa de vídeo, bateria
+          e preços nas maiores lojas para apontar qual produto entrega o melhor
+          custo-benefício para o seu bolso.
         </p>
 
         <div
-          className="animate-fade-up mt-10 flex flex-wrap items-center justify-center gap-3"
-          style={{ animationDelay: "180ms" }}
+          className="animate-fade-up mt-9 flex flex-wrap items-center justify-center gap-3"
+          style={{ animationDelay: "140ms" }}
         >
-          <a
-            href="#ofertas"
-            className="group inline-flex items-center gap-2 rounded-full bg-forest px-6 py-3 text-sm font-semibold text-cream transition-all hover:bg-forest-soft hover:shadow-lg hover:shadow-forest/20"
+          <Link
+            to="/comparar"
+            className="group inline-flex items-center gap-2 rounded-lg bg-forest px-6 py-3 text-sm font-semibold text-cream transition-colors hover:bg-forest-soft whitespace-nowrap shrink-0"
           >
-            Explorar ofertas
+            <Scale className="size-4" />
+            Comparar produtos lado a lado
             <ArrowRight className="size-4 transition-transform group-hover:translate-x-0.5" />
-          </a>
-          <a
-            href="#sobre"
-            className="inline-flex items-center gap-2 rounded-full border border-sand bg-cream/60 px-6 py-3 text-sm font-medium text-forest transition-colors hover:border-copper hover:text-copper"
+          </Link>
+
+          <Link
+            to="/catalogo"
+            className="inline-flex items-center gap-2 rounded-lg border border-sand bg-white/70 px-6 py-3 text-sm font-medium text-forest transition-colors hover:border-copper hover:text-copper whitespace-nowrap shrink-0"
           >
-            Como escolhemos
-          </a>
+            Explorar catálogo completo
+          </Link>
         </div>
       </div>
     </section>

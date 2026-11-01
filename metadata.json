@@ -1,0 +1,6 @@
+{
+  "name": "Bona Occasio — Curadoria e Comparador de Ofertas",
+  "description": "Compare especificações técnicas, processador, placa de vídeo e descubra o melhor custo-benefício entre produtos selecionados.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

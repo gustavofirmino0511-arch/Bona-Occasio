@@ -1,5 +1,5 @@
+import { useCompare } from "@/context/CompareContext";
 import { cn } from "@/lib/utils";
-import { categories } from "@/data/products";
 import type { CategoryId } from "@/types/product";
 
 interface Props {
@@ -8,12 +8,16 @@ interface Props {
 }
 
 export function CategoryFilter({ active, onChange }: Props) {
+  const { catalogCategories } = useCompare();
+
   return (
     <div
       id="categorias"
-      className="flex flex-wrap items-center justify-center gap-2"
+      role="group"
+      aria-label="Filtrar por categoria"
+      className="flex flex-wrap items-center gap-2"
     >
-      {categories.map((c) => {
+      {catalogCategories.map((c) => {
         const isActive = active === c.id;
         return (
           <button
@@ -22,10 +26,10 @@ export function CategoryFilter({ active, onChange }: Props) {
             onClick={() => onChange(c.id)}
             aria-pressed={isActive}
             className={cn(
-              "rounded-full border px-4 py-1.5 text-sm font-medium transition-all",
+              "rounded-lg border px-4 py-2 text-xs font-semibold transition-all whitespace-nowrap shrink-0",
               isActive
                 ? "border-forest bg-forest text-cream"
-                : "border-sand bg-cream/70 text-stone hover:border-copper hover:text-copper",
+                : "border-sand bg-white/70 text-stone hover:border-copper hover:text-forest",
             )}
           >
             {c.label}

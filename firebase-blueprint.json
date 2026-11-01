@@ -1,0 +1,250 @@
+{
+  "entities": {
+    "Product": {
+      "title": "Product",
+      "description": "Curated affiliate product with technical specs and comparison scores",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique product identifier"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160,
+          "description": "Full product commercial name"
+        },
+        "shortName": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Short display name for comparison tables"
+        },
+        "brand": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 60,
+          "description": "Product manufacturer brand"
+        },
+        "tagline": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 400,
+          "description": "Editorial summary tagline"
+        },
+        "image": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 50000,
+          "description": "Product image URL or studio SVG data URI"
+        },
+        "price": {
+          "type": "number",
+          "description": "Current offer price in BRL"
+        },
+        "originalPrice": {
+          "type": "number",
+          "description": "Previous price before discount in BRL"
+        },
+        "installmentText": {
+          "type": "string",
+          "maxLength": 120,
+          "description": "Installment payment summary text"
+        },
+        "category": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Category identifier"
+        },
+        "affiliateUrl": {
+          "type": "string",
+          "minLength": 4,
+          "maxLength": 1000,
+          "description": "Official affiliate purchase link"
+        },
+        "featured": {
+          "type": "boolean",
+          "description": "Whether product is featured on home page"
+        },
+        "idealFor": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 300,
+          "description": "Target buyer recommendation summary"
+        },
+        "highlightTitle": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120,
+          "description": "Short technical highlight badge"
+        },
+        "rating": {
+          "type": "number",
+          "description": "Average rating from 0 to 5"
+        },
+        "reviewCount": {
+          "type": "number",
+          "description": "Total number of user reviews"
+        },
+        "metrics": {
+          "type": "object",
+          "description": "Normalized 0-100 comparison metrics"
+        },
+        "specs": {
+          "type": "array",
+          "description": "List of standardized technical specifications"
+        },
+        "pros": {
+          "type": "array",
+          "description": "List of product pros"
+        },
+        "cons": {
+          "type": "array",
+          "description": "List of product cons"
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Whether product is publicly visible in the catalog"
+        },
+        "authorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the admin who published the product"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "shortName",
+        "brand",
+        "tagline",
+        "image",
+        "price",
+        "category",
+        "affiliateUrl",
+        "idealFor",
+        "highlightTitle",
+        "rating",
+        "reviewCount",
+        "metrics",
+        "specs",
+        "pros",
+        "cons",
+        "isPublic",
+        "authorUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Product category definition for catalog and comparator",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Unique category ID"
+        },
+        "label": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 80,
+          "description": "Display label for the category"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 240,
+          "description": "Short category description"
+        },
+        "isPublic": {
+          "type": "boolean",
+          "description": "Whether category is publicly visible"
+        },
+        "authorUid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "UID of the admin who created the category"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server update timestamp"
+        }
+      },
+      "required": [
+        "id",
+        "label",
+        "description",
+        "isPublic",
+        "authorUid",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized store owner administrator record",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID of the administrator"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["owner"],
+          "maxLength": 16,
+          "description": "Fixed owner role"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server creation timestamp"
+        }
+      },
+      "required": ["uid", "role", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/products/{productId}": {
+      "schema": { "$ref": "#/entities/Product" },
+      "description": "Publicly readable affiliate products managed exclusively by the store owner"
+    },
+    "/categories/{categoryId}": {
+      "schema": { "$ref": "#/entities/Category" },
+      "description": "Publicly readable product categories managed exclusively by the store owner"
+    },
+    "/admins/{adminId}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Store owner administrator registry"
+    }
+  }
+}

@@ -1,0 +1,189 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Pillar 1: Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Reusable Hardened Primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedAdmin() {
+      return isSignedIn() &&
+        request.auth.token.email_verified == true &&
+        (
+          request.auth.token.email == 'gustavofirmino0511@gmail.com' ||
+          exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+        );
+    }
+
+    function isValidMetrics(m) {
+      return m is map &&
+        m.keys().hasAll(['performance', 'costBenefit', 'battery', 'mobility', 'buildQuality']) &&
+        m.keys().hasOnly(['performance', 'costBenefit', 'battery', 'mobility', 'buildQuality']) &&
+        m.performance is number && m.performance >= 0 && m.performance <= 100 &&
+        m.costBenefit is number && m.costBenefit >= 0 && m.costBenefit <= 100 &&
+        m.battery is number && m.battery >= 0 && m.battery <= 100 &&
+        m.mobility is number && m.mobility >= 0 && m.mobility <= 100 &&
+        m.buildQuality is number && m.buildQuality >= 0 && m.buildQuality <= 100;
+    }
+
+    // Pillar 2 & 5: Validation Blueprints & Total Array Guarding
+    function isValidProduct(data) {
+      return data.keys().hasAll([
+          'id', 'name', 'shortName', 'brand', 'tagline', 'image', 'price',
+          'category', 'affiliateUrl', 'idealFor', 'highlightTitle',
+          'rating', 'reviewCount', 'metrics', 'specs', 'pros', 'cons',
+          'isPublic', 'authorUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'name', 'shortName', 'brand', 'tagline', 'image', 'price',
+          'originalPrice', 'installmentText', 'category', 'affiliateUrl',
+          'featured', 'idealFor', 'highlightTitle', 'rating', 'reviewCount',
+          'metrics', 'specs', 'pros', 'cons', 'isPublic', 'authorUid',
+          'createdAt', 'updatedAt'
+        ]) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 2 && data.name.size() <= 160 &&
+        data.shortName is string && data.shortName.size() >= 2 && data.shortName.size() <= 80 &&
+        data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 60 &&
+        data.tagline is string && data.tagline.size() >= 2 && data.tagline.size() <= 400 &&
+        data.image is string && data.image.size() >= 5 && data.image.size() <= 50000 &&
+        data.price is number && data.price >= 0 && data.price <= 1000000 &&
+        (!('originalPrice' in data) || (data.originalPrice is number && data.originalPrice >= 0 && data.originalPrice <= 1000000)) &&
+        (!('installmentText' in data) || (data.installmentText is string && data.installmentText.size() <= 120)) &&
+        data.category is string && data.category.size() >= 2 && data.category.size() <= 64 && data.category.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.affiliateUrl is string && data.affiliateUrl.size() >= 4 && data.affiliateUrl.size() <= 1000 &&
+        (!('featured' in data) || data.featured is bool) &&
+        data.idealFor is string && data.idealFor.size() >= 2 && data.idealFor.size() <= 300 &&
+        data.highlightTitle is string && data.highlightTitle.size() >= 2 && data.highlightTitle.size() <= 120 &&
+        data.rating is number && data.rating >= 0 && data.rating <= 5 &&
+        data.reviewCount is number && data.reviewCount >= 0 && data.reviewCount <= 1000000 &&
+        isValidMetrics(data.metrics) &&
+        data.specs is list && data.specs.size() >= 1 && data.specs.size() <= 20 &&
+        data.specs[0] is map &&
+        data.pros is list && data.pros.size() >= 1 && data.pros.size() <= 15 &&
+        data.pros[0] is string && data.pros[0].size() <= 300 &&
+        data.cons is list && data.cons.size() >= 1 && data.cons.size() <= 15 &&
+        data.cons[0] is string && data.cons[0].size() <= 300 &&
+        data.isPublic is bool &&
+        data.authorUid is string && data.authorUid.size() <= 128 && data.authorUid == request.auth.uid &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidCategory(data) {
+      return data.keys().hasAll([
+          'id', 'label', 'description', 'isPublic', 'authorUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'label', 'description', 'isPublic', 'authorUid', 'createdAt', 'updatedAt'
+        ]) &&
+        data.id is string && data.id.size() >= 2 && data.id.size() <= 64 && data.id.matches('^[a-zA-Z0-9_\\-]+$') &&
+        data.label is string && data.label.size() >= 2 && data.label.size() <= 80 &&
+        data.description is string && data.description.size() >= 2 && data.description.size() <= 240 &&
+        data.isPublic is bool &&
+        data.authorUid is string && data.authorUid.size() <= 128 && data.authorUid == request.auth.uid &&
+        data.createdAt is timestamp &&
+        data.updatedAt is timestamp;
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['uid', 'role', 'createdAt']) &&
+        data.keys().hasOnly(['uid', 'role', 'createdAt']) &&
+        isValidId(data.uid) &&
+        data.uid == request.auth.uid &&
+        data.role is string && data.role == 'owner' &&
+        data.createdAt is timestamp;
+    }
+
+    // Collection 1: /products/{productId}
+    match /products/{productId} {
+      allow get: if isValidId(productId) && (existing().isPublic == true || isVerifiedAdmin());
+      allow list: if existing().isPublic == true;
+
+      allow create: if isSignedIn() &&
+        isValidId(productId) &&
+        isValidProduct(incoming()) &&
+        incoming().id == productId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isVerifiedAdmin();
+
+      allow update: if isSignedIn() &&
+        isValidId(productId) &&
+        isValidProduct(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().authorUid == existing().authorUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'shortName', 'brand', 'tagline', 'image', 'price',
+          'originalPrice', 'installmentText', 'category', 'affiliateUrl',
+          'featured', 'idealFor', 'highlightTitle', 'rating', 'reviewCount',
+          'metrics', 'specs', 'pros', 'cons', 'isPublic', 'updatedAt'
+        ]) &&
+        isVerifiedAdmin();
+
+      allow delete: if isSignedIn() && isValidId(productId) && isVerifiedAdmin();
+    }
+
+    // Collection 2: /categories/{categoryId}
+    match /categories/{categoryId} {
+      allow get: if isValidId(categoryId) && (existing().isPublic == true || isVerifiedAdmin());
+      allow list: if existing().isPublic == true;
+
+      allow create: if isSignedIn() &&
+        isValidId(categoryId) &&
+        isValidCategory(incoming()) &&
+        incoming().id == categoryId &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isVerifiedAdmin();
+
+      allow update: if isSignedIn() &&
+        isValidId(categoryId) &&
+        isValidCategory(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().authorUid == existing().authorUid &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'label', 'description', 'isPublic', 'updatedAt'
+        ]) &&
+        isVerifiedAdmin();
+
+      allow delete: if isSignedIn() && isValidId(categoryId) && isVerifiedAdmin();
+    }
+
+    // Collection 3: /admins/{adminId}
+    match /admins/{adminId} {
+      allow get: if isSignedIn() && isValidId(adminId) && request.auth.uid == adminId && isVerifiedAdmin();
+      allow list: if false;
+
+      allow create: if isSignedIn() &&
+        isValidId(adminId) &&
+        request.auth.uid == adminId &&
+        isValidAdminUser(incoming()) &&
+        incoming().createdAt == request.time &&
+        isVerifiedAdmin();
+
+      allow update, delete: if false;
+    }
+  }
+}
