@@ -5,6 +5,8 @@ import {
   Check,
   CheckCircle2,
   Cloud,
+  ExternalLink,
+  Flame,
   FolderPlus,
   KeyRound,
   Link2,
@@ -13,7 +15,9 @@ import {
   LogOut,
   Pencil,
   Plus,
+  Radar,
   Scale,
+  Search,
   ShieldCheck,
   Sparkles,
   Trash2,
@@ -26,6 +30,12 @@ import {
   heuristicSuggestCategories,
   resolveProductUrlContent,
 } from "@/lib/aiCurator";
+import {
+  filterAndRankMinedDeals,
+  mineAffordableDeals,
+  type MinedDeal,
+  type MinerCategoryFilter,
+} from "@/lib/dealMiner";
 import { OWNER_EMAIL } from "@/lib/firebase";
 import { cn, formatBRL } from "@/lib/utils";
 import type {
@@ -114,6 +124,99 @@ export function AiStudio() {
   const [editPrice, setEditPrice] = useState("");
   const [editAffiliateUrl, setEditAffiliateUrl] = useState("");
   const [editIdealFor, setEditIdealFor] = useState("");
+
+  // Estado do Sistema de Mineração de Achadinhos & Promoções Baratas (Sem Chave de API)
+  const [minerMaxPrice, setMinerMaxPrice] = useState<number>(100);
+  const [minerCategory, setMinerCategory] =
+    useState<MinerCategoryFilter>("all");
+  const [minerQuery, setMinerQuery] = useState("");
+  const [isMiningDeals, setIsMiningDeals] = useState(false);
+  const [liveWebDealsCount, setLiveWebDealsCount] = useState(0);
+  const [minedDeals, setMinedDeals] = useState<MinedDeal[]>(() =>
+    filterAndRankMinedDeals([], { maxPrice: 100, categoryFilter: "all" }),
+  );
+  const [loadedMinedDealId, setLoadedMinedDealId] = useState<string | null>(
+    null,
+  );
+
+  const handleRunMiner = async (
+    nextMaxPrice = minerMaxPrice,
+    nextCategory = minerCategory,
+    nextQuery = minerQuery,
+  ) => {
+    setMinerMaxPrice(nextMaxPrice);
+    setMinerCategory(nextCategory);
+    setIsMiningDeals(true);
+    try {
+      const res = await fetch("/api/miner/search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          maxPrice: nextMaxPrice,
+          categoryFilter: nextCategory,
+          query: nextQuery,
+        }),
+      });
+      if (
+        res.ok &&
+        res.headers.get("content-type")?.includes("application/json")
+      ) {
+        const data = (await res.json()) as {
+          deals?: MinedDeal[];
+          liveCount?: number;
+        };
+        if (Array.isArray(data.deals)) {
+          setMinedDeals(data.deals);
+          setLiveWebDealsCount(data.liveCount ?? 0);
+          return;
+        }
+      }
+      const fallback = await mineAffordableDeals({
+        maxPrice: nextMaxPrice,
+        categoryFilter: nextCategory,
+        query: nextQuery,
+      });
+      setMinedDeals(fallback.deals);
+      setLiveWebDealsCount(fallback.liveCount);
+    } catch {
+      const fallback = filterAndRankMinedDeals([], {
+        maxPrice: nextMaxPrice,
+        categoryFilter: nextCategory,
+        query: nextQuery,
+      });
+      setMinedDeals(fallback);
+    } finally {
+      setIsMiningDeals(false);
+    }
+  };
+
+  const handleLoadMinedDealIntoImporter = (deal: MinedDeal) => {
+    setLoadedMinedDealId(deal.id);
+    setProductTitleHint(deal.title);
+    setPriceHint(String(deal.price).replace(".", ","));
+    setRawInput(`${deal.title}. ${deal.specsSummary}`);
+    setProductError(null);
+    setPublishedSuccessId(null);
+
+    const generatedDraft = heuristicAnalyzeProductInput(
+      `${deal.title} ${deal.specsSummary}`,
+      deal.price,
+      {
+        title: deal.title,
+        detectedPrice: deal.price,
+        detectedOriginalPrice: deal.originalPrice,
+        detectedBrand: deal.brand,
+        imageUrl: deal.image,
+      },
+    );
+    setDraft(generatedDraft);
+    setUseSuggestedNewCategory(Boolean(generatedDraft.suggestedNewCategory));
+
+    const el = document.getElementById("secao-cadastro-ia");
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  };
 
   const handleOwnerLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -516,7 +619,7 @@ export function AiStudio() {
               htmlFor="new-owner-pass"
               className="block text-xs font-semibold text-forest"
             >
-              Nova senha de proprietário (mínimo 4 caracteres)
+              Nova senha de proprietário (criptografada com SHA-256 · mín. 4 caracteres)
             </label>
             <input
               id="new-owner-pass"
@@ -536,6 +639,46 @@ export function AiStudio() {
         </form>
       )}
 
+      {/* Resumo das Camadas de Blindagem e Segurança Ativas */}
+      <div className="mb-8 rounded-2xl border border-sand bg-white/90 p-5 shadow-xs">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="inline-flex items-center gap-2 text-xs font-semibold text-forest">
+            <ShieldCheck className="size-4 text-copper" />
+            Blindagem de Segurança Ativa (5 Camadas de Proteção Contra Ataques)
+          </p>
+          <span className="rounded-md bg-forest/10 px-2.5 py-1 text-[11px] font-semibold text-forest">
+            Sessão expira automaticamente em 4h
+          </span>
+        </div>
+        <div className="mt-3 grid gap-2.5 text-xs text-stone sm:grid-cols-2 lg:grid-cols-4">
+          <div className="rounded-xl border border-sand/80 bg-cream/40 p-3">
+            <p className="font-semibold text-forest">1. Banco Zero-Trust</p>
+            <p className="mt-0.5 leading-relaxed">
+              Escrita no Firebase travada exclusivamente para o e-mail verificado{" "}
+              <span className="font-medium text-ink">{OWNER_EMAIL}</span>.
+            </p>
+          </div>
+          <div className="rounded-xl border border-sand/80 bg-cream/40 p-3">
+            <p className="font-semibold text-forest">2. Anti-Força Bruta & Timing</p>
+            <p className="mt-0.5 leading-relaxed">
+              Comparação criptográfica em tempo constante (SHA-256) e bloqueio por IP após 5 tentativas.
+            </p>
+          </div>
+          <div className="rounded-xl border border-sand/80 bg-cream/40 p-3">
+            <p className="font-semibold text-forest">3. Filtro Anti-XSS & HTTPS</p>
+            <p className="mt-0.5 leading-relaxed">
+              Links de afiliado exigem protocolo <code className="text-forest">https://</code> e bloqueiam scripts <code className="text-forest">javascript:</code>.
+            </p>
+          </div>
+          <div className="rounded-xl border border-sand/80 bg-cream/40 p-3">
+            <p className="font-semibold text-forest">4. Escudo Anti-SSRF & CSP</p>
+            <p className="mt-0.5 leading-relaxed">
+              Cabeçalhos HTTP Content-Security-Policy, Rate-Limit nas rotas de IA e bloqueio de IPs privados.
+            </p>
+          </div>
+        </div>
+      </div>
+
       {/* Cabeçalho */}
       <div className="max-w-3xl">
         <p className="text-xs font-semibold text-copper">
@@ -545,17 +688,270 @@ export function AiStudio() {
           className="mt-2 font-display text-3xl font-semibold tracking-tight text-forest sm:text-5xl"
           style={{ textWrap: "balance" }}
         >
-          Central IA de Produtos e Categorias
+          Central IA de Mineração, Produtos e Categorias
         </h1>
         <p className="mt-4 text-base leading-relaxed text-stone">
-          Cole apenas o link ou o nome do produto que você quer divulgar. A
-          inteligência artificial identifica a categoria ideal, escreve para
-          quem o produto é recomendado, analisa cada peça (processador, placa de
-          vídeo, câmera, bateria) e já sobe o produto para o site e comparador.
+          Minere promoções baratas de alta conversão (ex: R$ 29, R$ 42, R$ 89)
+          sem precisar de nenhuma chave de API, pegue seu link de afiliado no
+          Mercado Livre com 1 clique e suba o produto direto para o site e
+          comparador.
         </p>
       </div>
 
-      <div className="mt-12 grid gap-10 lg:grid-cols-12">
+      {/* ===================== SEÇÃO 00: MINERAÇÃO DE ACHADINHOS SEM API ===================== */}
+      <section className="mt-10 rounded-2xl border-2 border-forest/20 bg-white/95 p-6 shadow-xs sm:p-8">
+        <div className="flex flex-col justify-between gap-4 border-b border-sand pb-6 lg:flex-row lg:items-center">
+          <div>
+            <div className="inline-flex items-center gap-2 rounded-md bg-copper/15 px-2.5 py-1 text-xs font-bold text-copper-dark">
+              <Radar className="size-3.5" />
+              00. Garimpo Automático de Achadinhos · 100% Sem Chave de API
+            </div>
+            <h2 className="mt-2 font-display text-2xl font-semibold text-forest sm:text-3xl">
+              Minerador de Produtos Baratos & Bons (R$ 20 a R$ 200)
+            </h2>
+            <p className="mt-1 max-w-3xl text-xs leading-relaxed text-stone sm:text-sm">
+              Encontra ofertas acessíveis daquelas que o visitante olha e pensa:{" "}
+              <strong className="text-forest">
+                "Caramba, por R$ 39,90 vale muito a pena!"
+              </strong>
+              . Você não precisa criar chave de API nenhuma: clique em{" "}
+              <strong className="text-forest">1. Abrir no Mercado Livre</strong>{" "}
+              para gerar seu link <code className="text-copper-dark">meli.la</code> e depois em{" "}
+              <strong className="text-forest">2. Carregar no Cadastro IA</strong>.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            disabled={isMiningDeals}
+            onClick={() => void handleRunMiner()}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3.5 text-xs font-bold text-cream transition-colors hover:bg-forest-soft disabled:opacity-60 shrink-0"
+          >
+            {isMiningDeals ? (
+              <>
+                <Loader2 className="size-4 animate-spin" />
+                Varrendo ofertas ao vivo na web...
+              </>
+            ) : (
+              <>
+                <Flame className="size-4 text-copper" />
+                Buscar Promoções Ao Vivo Agora
+              </>
+            )}
+          </button>
+        </div>
+
+        {/* Filtros de Preço Máximo e Categoria do Minerador */}
+        <div className="mt-6 grid gap-4 lg:grid-cols-12">
+          <div className="lg:col-span-5">
+            <span className="block text-xs font-semibold text-forest">
+              1. Teto de Preço (Foco em Compra Fácil):
+            </span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {[
+                { max: 50, label: "Até R$ 50 (Impulso)" },
+                { max: 100, label: "Até R$ 100 (Campeões)" },
+                { max: 200, label: "Até R$ 200" },
+                { max: 350, label: "Até R$ 350" },
+              ].map((tier) => (
+                <button
+                  key={tier.max}
+                  type="button"
+                  onClick={() =>
+                    void handleRunMiner(tier.max, minerCategory, minerQuery)
+                  }
+                  className={cn(
+                    "rounded-xl px-3.5 py-2 text-xs font-semibold transition-colors",
+                    minerMaxPrice === tier.max
+                      ? "bg-forest text-cream"
+                      : "border border-sand bg-cream/70 text-forest hover:border-copper",
+                  )}
+                >
+                  {tier.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-4">
+            <span className="block text-xs font-semibold text-forest">
+              2. Nicho de Produto:
+            </span>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {(
+                [
+                  { id: "all", label: "Todos" },
+                  { id: "audio", label: "Fones & Áudio" },
+                  { id: "perifericos", label: "Setup & Celular" },
+                  { id: "casa", label: "Casa & Cozinha" },
+                ] as { id: MinerCategoryFilter; label: string }[]
+              ).map((cat) => (
+                <button
+                  key={cat.id}
+                  type="button"
+                  onClick={() =>
+                    void handleRunMiner(minerMaxPrice, cat.id, minerQuery)
+                  }
+                  className={cn(
+                    "rounded-xl px-3 py-2 text-xs font-semibold transition-colors",
+                    minerCategory === cat.id
+                      ? "bg-copper text-cream"
+                      : "border border-sand bg-cream/70 text-forest hover:border-copper",
+                  )}
+                >
+                  {cat.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="lg:col-span-3">
+            <label
+              htmlFor="miner-search-query"
+              className="block text-xs font-semibold text-forest"
+            >
+              3. Filtrar por palavra (opcional):
+            </label>
+            <div className="mt-2 flex gap-1.5">
+              <input
+                id="miner-search-query"
+                type="text"
+                value={minerQuery}
+                onChange={(e) => setMinerQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    void handleRunMiner(minerMaxPrice, minerCategory, minerQuery);
+                  }
+                }}
+                placeholder="Ex: fone, mouse, inox..."
+                className="w-full rounded-xl border border-sand bg-cream/60 px-3 py-2 text-xs text-ink placeholder:text-stone/60 focus:border-forest focus:outline-none"
+              />
+              <button
+                type="button"
+                aria-label="Filtrar achadinhos"
+                onClick={() =>
+                  void handleRunMiner(minerMaxPrice, minerCategory, minerQuery)
+                }
+                className="inline-flex items-center justify-center rounded-xl border border-forest bg-forest/10 px-3 py-2 text-xs font-semibold text-forest hover:bg-forest hover:text-cream"
+              >
+                <Search className="size-3.5" />
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Grade de Achadinhos Minerados */}
+        <div className="mt-6 flex flex-wrap items-center justify-between gap-2 text-xs text-stone">
+          <span>
+            Mostrando <strong className="text-forest">{minedDeals.length}</strong>{" "}
+            achadinhos de alto giro abaixo de{" "}
+            <strong className="text-forest">{formatBRL(minerMaxPrice)}</strong>
+            {liveWebDealsCount > 0
+              ? ` (${liveWebDealsCount} capturados ao vivo agora na web)`
+              : ""}
+          </span>
+          <span className="font-medium text-copper-dark">
+            Ordenados pelo maior Índice de Achadinho (Preço Baixo + Qualidade)
+          </span>
+        </div>
+
+        <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {minedDeals.map((deal) => {
+            const isLoaded = loadedMinedDealId === deal.id;
+            return (
+              <div
+                key={deal.id}
+                className={cn(
+                  "flex flex-col justify-between rounded-2xl border p-4 transition-all",
+                  isLoaded
+                    ? "border-2 border-copper bg-copper/5"
+                    : "border-sand bg-cream/40 hover:border-forest/40",
+                )}
+              >
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="inline-flex items-center gap-1 rounded-md bg-forest px-2 py-0.5 font-mono text-[11px] font-bold text-cream tabular-nums">
+                      -{deal.discountPercent}% OFF · Nota {deal.bargainScore}/100
+                    </span>
+                    <span className="text-[11px] font-semibold text-copper-dark">
+                      {deal.isLiveWebDeal ? "Ao Vivo na Web" : deal.storeName}
+                    </span>
+                  </div>
+
+                  <div className="mt-3 flex items-start gap-3">
+                    <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-sand bg-white p-1.5">
+                      <img
+                        src={deal.image}
+                        alt={deal.title}
+                        className="max-h-full max-w-full object-contain"
+                        loading="lazy"
+                      />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[11px] font-bold uppercase tracking-wider text-stone">
+                        {deal.brand}
+                      </p>
+                      <h3 className="mt-0.5 line-clamp-2 text-xs font-bold leading-snug text-forest sm:text-sm">
+                        {deal.title}
+                      </h3>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 flex items-baseline gap-2 rounded-xl border border-sand/80 bg-white px-3 py-2">
+                    <span className="font-mono text-lg font-bold text-forest tabular-nums">
+                      {formatBRL(deal.price)}
+                    </span>
+                    {deal.originalPrice > deal.price && (
+                      <span className="font-mono text-xs text-stone line-through tabular-nums">
+                        {formatBRL(deal.originalPrice)}
+                      </span>
+                    )}
+                    <span className="ml-auto text-[11px] font-semibold text-copper-dark">
+                      Compra fácil
+                    </span>
+                  </div>
+
+                  <p className="mt-2.5 text-xs leading-relaxed text-stone">
+                    <strong className="text-forest">Por que vende muito: </strong>
+                    {deal.whyItSells}
+                  </p>
+                </div>
+
+                <div className="mt-4 space-y-2 border-t border-sand/80 pt-3">
+                  <a
+                    href={deal.mercadoLivreSearchUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-forest/30 bg-white px-3 py-2 text-xs font-semibold text-forest transition-colors hover:bg-forest hover:text-cream"
+                  >
+                    1. Abrir no Mercado Livre (Pegar Link)
+                    <ExternalLink className="size-3.5" />
+                  </a>
+
+                  <button
+                    type="button"
+                    onClick={() => handleLoadMinedDealIntoImporter(deal)}
+                    className={cn(
+                      "inline-flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-colors",
+                      isLoaded
+                        ? "bg-forest text-cream"
+                        : "bg-copper text-cream hover:bg-copper-soft",
+                    )}
+                  >
+                    <Sparkles className="size-3.5" />
+                    {isLoaded
+                      ? "Carregado no Cadastro Abaixo ✓"
+                      : "2. Carregar Ficha no Cadastro IA ↓"}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <div id="secao-cadastro-ia" className="mt-12 grid gap-10 lg:grid-cols-12">
         {/* Coluna Esquerda (7 cols): Subir Produto por Link com IA */}
         <section className="lg:col-span-7">
           <div className="rounded-2xl border border-sand bg-white/85 p-6 sm:p-8">

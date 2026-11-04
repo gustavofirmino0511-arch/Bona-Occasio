@@ -31,4 +31,15 @@ test("Firestore security rules enforce all 8 pillars and reject Dirty Dozen vuln
 
   // 5. Query Enforcer on list
   assert.ok(rules.includes("allow list: if existing().isPublic == true;"));
+
+  // 6. Strict HTTPS and image protocol guards against XSS/javascript: injection
+  assert.ok(
+    rules.includes("data.affiliateUrl.matches('^https://[^\\\\s\"<>]+$')"),
+    "Must enforce strict HTTPS regex on affiliateUrl",
+  );
+  assert.ok(
+    rules.includes("data.image.matches('^(https://[^\\\\s\"<>]+|data:image/.*)$')"),
+    "Must enforce strict HTTPS or data:image regex on image",
+  );
 });
+

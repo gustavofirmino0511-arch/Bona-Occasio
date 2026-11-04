@@ -105,10 +105,10 @@ export function calculatePriorityScore(
   switch (priority) {
     case "custo-beneficio":
       raw =
-        costBenefit * 0.45 +
-        performance * 0.22 +
+        costBenefit * 0.52 +
+        performance * 0.25 +
         buildQuality * 0.13 +
-        priceScore * 0.2;
+        priceScore * 0.1;
       break;
     case "desempenho":
       raw =
@@ -273,25 +273,32 @@ export function analyzeComparison(
     highestPrice.price - bestCostBenefit.price,
   );
 
+  const techFocusLabel =
+    bestPerformance.category === "audio"
+      ? "qualidade sonora, cancelamento de ruído e recursos"
+      : bestPerformance.category === "perifericos"
+        ? "construção, resposta e acabamento"
+        : "processamento, desempenho e ficha técnica";
+
   let verdictSummary = "";
   if (products.length === 1) {
     verdictSummary = `Selecione pelo menos mais um produto para comparar lado a lado com o ${winner.shortName}.`;
   } else if (priority === "custo-beneficio") {
     if (bestCostBenefit.id === bestPerformance.id) {
-      verdictSummary = `O ${bestCostBenefit.shortName} domina o comparativo: entrega simultaneamente o melhor conjunto técnico (${bestCostBenefit.metrics.performance}/100) e a melhor relação custo-benefício da categoria.`;
+      verdictSummary = `O ${bestCostBenefit.shortName} domina o comparativo: entrega simultaneamente o melhor conjunto em ${techFocusLabel} (${bestCostBenefit.metrics.performance}/100) e a melhor relação custo-benefício.`;
     } else {
       verdictSummary = `Para compra inteligente, o ${bestCostBenefit.shortName} ganha no custo-benefício${
         savingsVsMostExpensive > 0
           ? ` (economia de R$ ${savingsVsMostExpensive.toLocaleString("pt-BR")} frente ao mais caro)`
           : ""
-      }. Já se você exige poder máximo de placa de vídeo e processador, o ${bestPerformance.shortName} ganha em força bruta.`;
+      }. Já se você busca o máximo em ${techFocusLabel}, o ${bestPerformance.shortName} lidera em ficha técnica.`;
     }
   } else if (priority === "desempenho") {
-    verdictSummary = `Com foco em potência bruta, o ${winner.shortName} vence com ${winner.metrics.performance}/100 em hardware (${winner.highlightTitle}), superando os concorrentes nas tarefas mais pesadas.`;
+    verdictSummary = `Com foco em ${techFocusLabel}, o ${winner.shortName} vence com ${winner.metrics.performance}/100 (${winner.highlightTitle}), superando os concorrentes nos quesitos mais exigentes.`;
   } else if (priority === "economia") {
     verdictSummary = `Buscando gastar o mínimo com segurança, o ${winner.shortName} ganha pelo menor investimento, mantendo especificações honestas para o dia a dia.`;
   } else {
-    verdictSummary = `Para quem trabalha ou estuda em movimento, o ${winner.shortName} ganha pela combinação superior de autonomia de bateria (${winner.metrics.battery}/100) e leveza.`;
+    verdictSummary = `Para quem prioriza praticidade no uso diário, o ${winner.shortName} ganha pela combinação superior de autonomia (${winner.metrics.battery}/100) e conforto.`;
   }
 
   return {

@@ -5,10 +5,12 @@
   --color-ink: #14110e;
   --color-forest: #1e3a2f;
   --color-forest-soft: #2c5142;
+  --color-forest-light: #2c5142;
   --color-copper: #b87333;
   --color-copper-soft: #d4915a;
+  --color-copper-dark: #9a5b20;
   --color-sand: #f0eae0;
-  --color-stone: #6b6259;
+  --color-stone: #554d45;
 
   --font-display: "Fraunces", Georgia, "Times New Roman", serif;
   --font-sans: "Plus Jakarta Sans", system-ui, -apple-system, sans-serif;

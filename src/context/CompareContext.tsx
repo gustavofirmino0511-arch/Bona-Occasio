@@ -29,6 +29,12 @@ import {
   where,
   type User,
 } from "@/lib/firebase";
+import {
+  hashPasswordSha256,
+  sanitizeAffiliateUrl,
+  sanitizeImageUrl,
+  sanitizePlainText,
+} from "@/lib/security";
 import type {
   Category,
   CategoryId,
@@ -78,35 +84,47 @@ interface CompareContextValue {
 }
 
 const DEFAULT_SELECTED: Record<string, string[]> = {
-  notebooks: [
-    "notebook-vivobook-ryzen7",
-    "notebook-acer-nitro-v15",
-    "notebook-ideapad-slim3",
-  ],
-  smartphones: [
-    "phone-galaxy-a55",
-    "phone-poco-x6-pro",
-    "phone-moto-g84",
-  ],
   audio: [
-    "audio-qcy-h3",
-    "audio-jbl-tune-770nc",
-    "audio-sony-wh1000xm5",
-  ],
-  perifericos: [
-    "perif-aula-f75",
-    "perif-keychron-k2-pro",
-    "perif-logitech-mx-mechanical",
+    "audio-anker-soundcore-p30i",
+    "audio-eletric-teck-usbc",
   ],
 };
 
-const STORAGE_PRODUCTS_KEY = "bona_occasio_custom_products_v4";
-const STORAGE_CATEGORIES_KEY = "bona_occasio_custom_categories_v4";
-const STORAGE_ADMIN_SESSION_KEY = "bona_occasio_owner_session_v1";
-const STORAGE_ADMIN_CUSTOM_PASS_KEY = "bona_occasio_owner_pass_v1";
+const STORAGE_PRODUCTS_KEY = "bona_occasio_custom_products_v7";
+const STORAGE_CATEGORIES_KEY = "bona_occasio_custom_categories_v7";
+const STORAGE_ADMIN_SESSION_KEY = "bona_occasio_owner_session_v2";
+const STORAGE_ADMIN_CUSTOM_PASS_HASH_KEY = "bona_occasio_owner_pass_hash_v2";
+const LEGACY_PLAIN_PASS_KEY = "bona_occasio_owner_pass_v1";
 const DEFAULT_OWNER_PASS = "bona2026";
+const SESSION_TTL_MS = 4 * 60 * 60 * 1000; // 4 horas de expiração automática
 
 const CompareContext = createContext<CompareContextValue | null>(null);
+
+function isRealProduct(item: Product): boolean {
+  if (!item || !item.affiliateUrl) return false;
+  if (item.affiliateUrl === "#" || item.affiliateUrl.includes("exemplo.com")) {
+    return false;
+  }
+  const safeUrl = sanitizeAffiliateUrl(item.affiliateUrl);
+  if (safeUrl === "https://exemplo.com") {
+    return false;
+  }
+  return true;
+}
+
+function sanitizeProductItem(item: Product): Product {
+  return {
+    ...item,
+    name: sanitizePlainText(item.name, 160) || "Produto",
+    shortName: sanitizePlainText(item.shortName || item.name, 80) || "Produto",
+    brand: sanitizePlainText(item.brand, 60) || "Marca",
+    tagline: sanitizePlainText(item.tagline, 400),
+    idealFor: sanitizePlainText(item.idealFor, 300),
+    highlightTitle: sanitizePlainText(item.highlightTitle, 120),
+    affiliateUrl: sanitizeAffiliateUrl(item.affiliateUrl),
+    image: sanitizeImageUrl(item.image),
+  };
+}
 
 function mergeProductsWithCloud(
   localList: Product[],
@@ -114,11 +132,13 @@ function mergeProductsWithCloud(
 ): Product[] {
   const byId = new Map<string, Product>();
   for (const item of cloudList) {
-    byId.set(item.id, item);
+    if (isRealProduct(item)) {
+      byId.set(item.id, sanitizeProductItem(item));
+    }
   }
   for (const item of localList) {
-    if (!byId.has(item.id)) {
-      byId.set(item.id, item);
+    if (isRealProduct(item) && !byId.has(item.id)) {
+      byId.set(item.id, sanitizeProductItem(item));
     }
   }
   return Array.from(byId.values());
@@ -145,7 +165,8 @@ export function CompareProvider({ children }: { children: ReactNode }) {
       if (saved) {
         const parsed = JSON.parse(saved) as Product[];
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          const merged = mergeProductsWithCloud(initialProducts, parsed);
+          if (merged.length > 0) return merged;
         }
       }
     } catch {
@@ -174,7 +195,16 @@ export function CompareProvider({ children }: { children: ReactNode }) {
 
   const [hasPasswordSession, setHasPasswordSession] = useState<boolean>(() => {
     try {
-      return sessionStorage.getItem(STORAGE_ADMIN_SESSION_KEY) === "true";
+      // Remove qualquer chave antiga de senha em texto puro caso exista
+      localStorage.removeItem(LEGACY_PLAIN_PASS_KEY);
+      const rawSession = sessionStorage.getItem(STORAGE_ADMIN_SESSION_KEY);
+      if (!rawSession) return false;
+      const parsed = JSON.parse(rawSession) as { expiresAt?: number };
+      if (parsed.expiresAt && parsed.expiresAt > Date.now()) {
+        return true;
+      }
+      sessionStorage.removeItem(STORAGE_ADMIN_SESSION_KEY);
+      return false;
     } catch {
       return false;
     }
@@ -187,7 +217,7 @@ export function CompareProvider({ children }: { children: ReactNode }) {
   const isAdminAuthenticated = isFirebaseOwner || hasPasswordSession;
 
   const [activeCategory, setActiveCategoryState] =
-    useState<CategoryId>("notebooks");
+    useState<CategoryId>("audio");
   const [selectedIdsByCategory, setSelectedIdsByCategory] =
     useState<Record<string, string[]>>(DEFAULT_SELECTED);
   const [priority, setPriority] =
@@ -301,7 +331,10 @@ export function CompareProvider({ children }: { children: ReactNode }) {
           error: `A conta ${email} não é a conta proprietária autorizada (${OWNER_EMAIL}).`,
         };
       }
-      sessionStorage.setItem(STORAGE_ADMIN_SESSION_KEY, "true");
+      sessionStorage.setItem(
+        STORAGE_ADMIN_SESSION_KEY,
+        JSON.stringify({ expiresAt: Date.now() + SESSION_TTL_MS }),
+      );
       setHasPasswordSession(true);
       return { ok: true };
     } catch (err) {
@@ -348,29 +381,37 @@ export function CompareProvider({ children }: { children: ReactNode }) {
         const data = (await res.json()) as { ok?: boolean };
         if (data.ok) {
           sessionStorage.removeItem(LOCKOUT_KEY);
-          sessionStorage.setItem(STORAGE_ADMIN_SESSION_KEY, "true");
+          sessionStorage.setItem(
+            STORAGE_ADMIN_SESSION_KEY,
+            JSON.stringify({ expiresAt: Date.now() + SESSION_TTL_MS }),
+          );
           setHasPasswordSession(true);
           return true;
         }
       }
     } catch {
-      // Continua para validação local
+      // Continua para validação com hash SHA-256
     }
 
-    let expectedPass = DEFAULT_OWNER_PASS;
+    const candidateHash = await hashPasswordSha256(trimmed);
+    const defaultHash = await hashPasswordSha256(DEFAULT_OWNER_PASS);
+    let customHash: string | null = null;
     try {
-      const custom = localStorage.getItem(STORAGE_ADMIN_CUSTOM_PASS_KEY);
-      if (custom && custom.trim().length >= 4) {
-        expectedPass = custom.trim();
-      }
+      customHash = localStorage.getItem(STORAGE_ADMIN_CUSTOM_PASS_HASH_KEY);
     } catch {
       // Ignora erro
     }
 
-    if (trimmed === expectedPass || trimmed === DEFAULT_OWNER_PASS) {
+    if (
+      (customHash && candidateHash === customHash) ||
+      candidateHash === defaultHash
+    ) {
       try {
         sessionStorage.removeItem(LOCKOUT_KEY);
-        sessionStorage.setItem(STORAGE_ADMIN_SESSION_KEY, "true");
+        sessionStorage.setItem(
+          STORAGE_ADMIN_SESSION_KEY,
+          JSON.stringify({ expiresAt: Date.now() + SESSION_TTL_MS }),
+        );
       } catch {
         // Ignora erro
       }
@@ -410,12 +451,15 @@ export function CompareProvider({ children }: { children: ReactNode }) {
 
   const changeAdminPassword = useCallback((newPassword: string) => {
     const trimmed = newPassword.trim();
-    if (trimmed.length >= 4) {
-      try {
-        localStorage.setItem(STORAGE_ADMIN_CUSTOM_PASS_KEY, trimmed);
-      } catch {
-        // Ignora erro
-      }
+    if (trimmed.length >= 4 && trimmed.length <= 128) {
+      void hashPasswordSha256(trimmed).then((hashed) => {
+        try {
+          localStorage.removeItem(LEGACY_PLAIN_PASS_KEY);
+          localStorage.setItem(STORAGE_ADMIN_CUSTOM_PASS_HASH_KEY, hashed);
+        } catch {
+          // Ignora erro
+        }
+      });
     }
   }, []);
 

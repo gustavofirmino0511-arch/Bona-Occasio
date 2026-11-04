@@ -39,6 +39,7 @@
           "type": "string",
           "minLength": 5,
           "maxLength": 50000,
+          "pattern": "^(https://[^\\s\"<>]+|data:image/.*)$",
           "description": "Product image URL or studio SVG data URI"
         },
         "price": {
@@ -63,9 +64,10 @@
         },
         "affiliateUrl": {
           "type": "string",
-          "minLength": 4,
+          "minLength": 8,
           "maxLength": 1000,
-          "description": "Official affiliate purchase link"
+          "pattern": "^https://[^\\s\"<>]+$",
+          "description": "Official HTTPS affiliate purchase link"
         },
         "featured": {
           "type": "boolean",

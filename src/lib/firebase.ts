@@ -11,6 +11,7 @@ import {
   collection,
   deleteDoc,
   doc,
+  getDoc,
   getDocFromServer,
   getFirestore,
   onSnapshot,
@@ -21,7 +22,11 @@ import {
 } from "firebase/firestore";
 import firebaseConfig from "../../firebase-applet-config.json";
 import type { Category, Product } from "../types/product";
-import { sanitizeExternalUrl } from "./utils";
+import {
+  sanitizeExternalUrl,
+  sanitizeImageUrl,
+  sanitizePlainText,
+} from "./utils";
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
@@ -48,7 +53,7 @@ export interface FirestoreErrorInfo {
     email?: string | null;
     emailVerified?: boolean | null;
     isAnonymous?: boolean | null;
-    tenantId?: string | null;
+    tenantId?: boolean | string | null;
     providerInfo?: {
       providerId?: string | null;
       email?: string | null;
@@ -85,7 +90,7 @@ export function handleFirestoreError(
 // Validate connection to Firestore on boot
 async function testConnection() {
   try {
-    await getDocFromServer(doc(db, "products", "notebook-vivobook-ryzen7"));
+    await getDocFromServer(doc(db, "products", "audio-anker-soundcore-p30i"));
   } catch (error) {
     if (
       error instanceof Error &&
@@ -117,23 +122,26 @@ export function sanitizeProductPayload(
 
   const payload: Record<string, unknown> = {
     id: safeId,
-    name: (product.name || "Produto").trim().slice(0, 160),
-    shortName: (product.shortName || product.name || "Produto")
-      .trim()
-      .slice(0, 80),
-    brand: (product.brand || "Marca").trim().slice(0, 60),
-    tagline: (product.tagline || product.idealFor || "Oferta selecionada")
-      .trim()
-      .slice(0, 400),
-    image: (product.image || "https://exemplo.com/img.svg").slice(0, 50000),
+    name: sanitizePlainText(product.name || "Produto", 160) || "Produto",
+    shortName:
+      sanitizePlainText(product.shortName || product.name || "Produto", 80) ||
+      "Produto",
+    brand: sanitizePlainText(product.brand || "Marca", 60) || "Marca",
+    tagline:
+      sanitizePlainText(
+        product.tagline || product.idealFor || "Oferta selecionada",
+        400,
+      ) || "Oferta selecionada",
+    image: sanitizeImageUrl(product.image).slice(0, 50000),
     price: Math.max(0, Math.min(1000000, Number(product.price) || 0)),
     category: safeCategory,
     affiliateUrl: sanitizeExternalUrl(product.affiliateUrl).slice(0, 1000),
     featured: Boolean(product.featured),
-    idealFor: (product.idealFor || "Uso geral").trim().slice(0, 300),
-    highlightTitle: (product.highlightTitle || "Destaque")
-      .trim()
-      .slice(0, 120),
+    idealFor:
+      sanitizePlainText(product.idealFor || "Uso geral", 300) || "Uso geral",
+    highlightTitle:
+      sanitizePlainText(product.highlightTitle || "Destaque", 120) ||
+      "Destaque",
     rating: Math.max(0, Math.min(5, Number(product.rating) || 4.8)),
     reviewCount: Math.max(
       0,
@@ -167,21 +175,23 @@ export function sanitizeProductPayload(
     )
       .slice(0, 20)
       .map((s) => ({
-        key: String(s.key || "spec").slice(0, 64),
-        label: String(s.label || "Item").slice(0, 120),
-        value: String(s.value || "Sim").slice(0, 300),
+        key: sanitizePlainText(s.key || "spec", 64) || "spec",
+        label: sanitizePlainText(s.label || "Item", 120) || "Item",
+        value: sanitizePlainText(s.value || "Sim", 300) || "Sim",
         score: Math.max(0, Math.min(100, Math.round(Number(s.score) || 80))),
-        ...(s.usageNote ? { usageNote: String(s.usageNote).slice(0, 400) } : {}),
+        ...(s.usageNote
+          ? { usageNote: sanitizePlainText(s.usageNote, 400) }
+          : {}),
       })),
     pros: (product.pros.length > 0 ? product.pros : ["Excelente custo-benefício"])
       .slice(0, 15)
-      .map((p) => String(p).slice(0, 300)),
+      .map((p) => sanitizePlainText(p, 300) || "Ponto positivo"),
     cons: (product.cons.length > 0
       ? product.cons
       : ["Estoque sujeito a variação"]
     )
       .slice(0, 15)
-      .map((c) => String(c).slice(0, 300)),
+      .map((c) => sanitizePlainText(c, 300) || "Ponto de atenção"),
     isPublic: true,
     authorUid: authorUid.slice(0, 128),
   };
@@ -197,7 +207,7 @@ export function sanitizeProductPayload(
   }
 
   if (product.installmentText && product.installmentText.trim().length > 0) {
-    payload.installmentText = product.installmentText.trim().slice(0, 120);
+    payload.installmentText = sanitizePlainText(product.installmentText, 120);
   }
 
   return { safeId, payload };
@@ -209,14 +219,21 @@ export async function saveProductToCloud(product: Product): Promise<void> {
 
   const { safeId, payload } = sanitizeProductPayload(product, user.uid);
   const path = `products/${safeId}`;
+  const docRef = doc(db, "products", safeId);
   try {
-    await setDoc(doc(db, "products", safeId), {
+    const existingSnap = await getDoc(docRef);
+    const existingData = existingSnap.exists() ? existingSnap.data() : null;
+    await setDoc(docRef, {
       ...payload,
-      createdAt: serverTimestamp(),
+      authorUid:
+        typeof existingData?.authorUid === "string"
+          ? existingData.authorUid
+          : payload.authorUid,
+      createdAt: existingData?.createdAt ?? serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 
@@ -239,22 +256,28 @@ export async function saveCategoryToCloud(category: Category): Promise<void> {
 
   const safeId = sanitizeId(String(category.id), 64);
   const path = `categories/${safeId}`;
+  const docRef = doc(db, "categories", safeId);
   try {
-    await setDoc(doc(db, "categories", safeId), {
+    const existingSnap = await getDoc(docRef);
+    const existingData = existingSnap.exists() ? existingSnap.data() : null;
+    await setDoc(docRef, {
       id: safeId,
-      label: (category.label || "Categoria").trim().slice(0, 80),
-      description: (
-        category.description || "Produtos selecionados pela curadoria"
-      )
-        .trim()
-        .slice(0, 240),
+      label: sanitizePlainText(category.label || "Categoria", 80) || "Categoria",
+      description:
+        sanitizePlainText(
+          category.description || "Produtos selecionados pela curadoria",
+          240,
+        ) || "Produtos selecionados pela curadoria",
       isPublic: true,
-      authorUid: user.uid.slice(0, 128),
-      createdAt: serverTimestamp(),
+      authorUid:
+        typeof existingData?.authorUid === "string"
+          ? existingData.authorUid
+          : user.uid.slice(0, 128),
+      createdAt: existingData?.createdAt ?? serverTimestamp(),
       updatedAt: serverTimestamp(),
     });
   } catch (error) {
-    handleFirestoreError(error, OperationType.CREATE, path);
+    handleFirestoreError(error, OperationType.WRITE, path);
   }
 }
 

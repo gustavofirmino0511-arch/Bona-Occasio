@@ -106,12 +106,22 @@ export function ProductDetail() {
       {/* Módulo Principal Contíguo (Imagem Esquerda + Compra Direta Direita) */}
       <div className="grid gap-10 lg:grid-cols-12 lg:gap-12">
         <div className="lg:col-span-6">
-          <div className="overflow-hidden rounded-2xl border border-sand bg-sand">
+          <div
+            className={cn(
+              "overflow-hidden rounded-2xl border border-sand",
+              product.image.startsWith("https://") ? "bg-white p-6" : "bg-sand",
+            )}
+          >
             <img
               src={product.image}
               alt={product.name}
               referrerPolicy="no-referrer"
-              className="aspect-[5/4] w-full object-cover"
+              className={cn(
+                "aspect-[5/4] w-full",
+                product.image.startsWith("https://")
+                  ? "object-contain"
+                  : "object-cover",
+              )}
             />
           </div>
 
@@ -199,9 +209,9 @@ export function ProductDetail() {
               href={sanitizeExternalUrl(product.affiliateUrl)}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-forest px-6 py-4 text-sm font-semibold text-cream transition-colors hover:bg-forest-soft"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-copper px-6 py-4 text-sm font-semibold text-white shadow-xs transition-colors hover:bg-copper-dark"
             >
-              Comprar agora na oferta oficial
+              Ir para o produto
               <ArrowUpRight className="size-4" />
             </a>
 

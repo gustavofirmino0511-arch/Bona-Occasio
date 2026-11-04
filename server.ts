@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { GoogleGenAI, ThinkingLevel, Type } from "@google/genai";
@@ -8,6 +9,10 @@ import {
   heuristicSuggestCategories,
   resolveProductUrlContent,
 } from "./src/lib/aiCurator";
+import {
+  mineAffordableDeals,
+  type MinerCategoryFilter,
+} from "./src/lib/dealMiner";
 import type {
   AiCatalogAdviceResponse,
   AiProductDraft,
@@ -33,6 +38,16 @@ function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   });
 }
 
+/**
+ * Comparação de senhas em tempo constante (Timing-Safe) usando SHA-256
+ * para impedir que atacantes descubram a senha medindo microssegundos de resposta.
+ */
+function timingSafePasswordEqual(candidate: string, secret: string): boolean {
+  const hashA = crypto.createHash("sha256").update(candidate).digest();
+  const hashB = crypto.createHash("sha256").update(secret).digest();
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
 function getGeminiClient(): GoogleGenAI | null {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey || apiKey.trim().length === 0) {
@@ -52,13 +67,25 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // Cabeçalhos de segurança contra ataques XSS, sniffing e vazamento de dados
+  // Oculta assinatura do servidor Express contra scanners automatizados
+  app.disable("x-powered-by");
+
+  // Cabeçalhos de segurança HTTP (Defesa em Profundidade contra XSS, Clickjacking, Sniffing e Injeção)
   app.use((_req, res, next) => {
     res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Frame-Options", "SAMEORIGIN");
     res.setHeader("Referrer-Policy", "strict-origin-when-cross-origin");
     res.setHeader(
+      "Cross-Origin-Opener-Policy",
+      "same-origin-allow-popups",
+    );
+    res.setHeader(
       "Permissions-Policy",
-      "camera=(), microphone=(), geolocation=(), payment=()",
+      "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+    );
+    res.setHeader(
+      "Content-Security-Policy",
+      "default-src 'self' https: data: blob:; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://www.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' https: data: blob:; connect-src 'self' https: wss: ws:; frame-src 'self' https://*.firebaseapp.com https://accounts.google.com; object-src 'none'; base-uri 'self'; form-action 'self';",
     );
     next();
   });
@@ -66,17 +93,44 @@ async function startServer() {
   // Limite estrito de tamanho do JSON para evitar ataques de exaustão de memória (DoS)
   app.use(express.json({ limit: "100kb" }));
 
-  // Proteção contra força bruta (Rate Limiting por IP)
+  // Proteção contra força bruta e DDoS (Rate Limiting por IP com limite máximo de memória)
+  const MAX_TRACKED_IPS = 2000;
   const loginAttemptsByIp = new Map<
     string,
     { count: number; lockedUntil: number }
   >();
-  const aiRequestsByIp = new Map<string, { count: number; windowStart: number }>();
+  const aiRequestsByIp = new Map<
+    string,
+    { count: number; windowStart: number }
+  >();
 
-  // Endpoint de autenticação exclusiva do proprietário com bloqueio anti-força bruta
+  function checkAiRateLimit(ip: string, maxPerMinute = 15): boolean {
+    const now = Date.now();
+    if (aiRequestsByIp.size > MAX_TRACKED_IPS) {
+      const oldestKey = aiRequestsByIp.keys().next().value;
+      if (oldestKey) aiRequestsByIp.delete(oldestKey);
+    }
+    const rec = aiRequestsByIp.get(ip);
+    if (rec && now - rec.windowStart < 60_000) {
+      if (rec.count >= maxPerMinute) {
+        return false;
+      }
+      rec.count += 1;
+      return true;
+    }
+    aiRequestsByIp.set(ip, { count: 1, windowStart: now });
+    return true;
+  }
+
+  // Endpoint de autenticação exclusiva do proprietário com bloqueio anti-força bruta e timing-safe
   app.post("/api/admin/login", (req, res) => {
     const ip = req.ip || "unknown";
     const now = Date.now();
+    if (loginAttemptsByIp.size > MAX_TRACKED_IPS) {
+      const oldestKey = loginAttemptsByIp.keys().next().value;
+      if (oldestKey) loginAttemptsByIp.delete(oldestKey);
+    }
+
     const record = loginAttemptsByIp.get(ip) ?? { count: 0, lockedUntil: 0 };
 
     if (record.lockedUntil > now) {
@@ -89,11 +143,15 @@ async function startServer() {
 
     const { password } = req.body as { password?: string };
     const expected = process.env.ADMIN_PASSWORD || "bona2026";
+    const candidate =
+      typeof password === "string" && password.length <= 128
+        ? password.trim()
+        : "";
+
     if (
-      password &&
-      typeof password === "string" &&
-      password.length <= 128 &&
-      (password.trim() === expected || password.trim() === "bona2026")
+      candidate.length > 0 &&
+      (timingSafePasswordEqual(candidate, expected) ||
+        timingSafePasswordEqual(candidate, "bona2026"))
     ) {
       loginAttemptsByIp.delete(ip);
       res.json({ ok: true });
@@ -111,18 +169,11 @@ async function startServer() {
   // Endpoint 1: Analisa um link de produto ou descrição e gera toda a estrutura para o site e comparador
   app.post("/api/ai/analyze-product", async (req, res) => {
     const ip = req.ip || "unknown";
-    const now = Date.now();
-    const aiRec = aiRequestsByIp.get(ip);
-    if (aiRec && now - aiRec.windowStart < 60_000) {
-      if (aiRec.count >= 20) {
-        res.status(429).json({
-          error: "Limite de análises por minuto atingido. Aguarde alguns segundos.",
-        });
-        return;
-      }
-      aiRec.count += 1;
-    } else {
-      aiRequestsByIp.set(ip, { count: 1, windowStart: now });
+    if (!checkAiRateLimit(ip, 15)) {
+      res.status(429).json({
+        error: "Limite de análises por minuto atingido. Aguarde alguns segundos.",
+      });
+      return;
     }
 
     const { rawInput, priceHint, existingCategories } = req.body as {
@@ -329,13 +380,23 @@ ${effectivePrice ? `Preço informado/detectado: R$ ${effectivePrice}` : "Se o pr
 
   // Endpoint 2: Analisa o catálogo atual e sugere novas categorias e melhorias de posicionamento ("Ideal para")
   app.post("/api/ai/suggest-categories", async (req, res) => {
+    const ip = req.ip || "unknown";
+    if (!checkAiRateLimit(ip, 15)) {
+      res.status(429).json({
+        error: "Limite de consultas por minuto atingido. Aguarde alguns segundos.",
+      });
+      return;
+    }
+
     const { products, categories } = req.body as {
       products?: Product[];
       categories?: Category[];
     };
 
-    const safeProducts = products ?? [];
-    const safeCategories = categories ?? [];
+    const safeProducts = Array.isArray(products) ? products.slice(0, 60) : [];
+    const safeCategories = Array.isArray(categories)
+      ? categories.slice(0, 30)
+      : [];
 
     const ai = getGeminiClient();
     if (!ai) {
@@ -420,6 +481,50 @@ ${effectivePrice ? `Preço informado/detectado: R$ ${effectivePrice}` : "Se o pr
     } catch {
       const fallback = heuristicSuggestCategories(safeProducts, safeCategories);
       res.json({ advice: fallback, source: "smart-engine" });
+    }
+  });
+
+  // Endpoint 3: Minerador de Achadinhos & Promoções Baratas (Zero Chave de API necessária pelo usuário)
+  app.post("/api/miner/search", async (req, res) => {
+    const ip = req.ip || "unknown";
+    if (!checkAiRateLimit(ip, 20)) {
+      res.status(429).json({
+        error: "Muitas buscas seguidas. Aguarde alguns segundos.",
+      });
+      return;
+    }
+
+    const { maxPrice, categoryFilter, query } = req.body as {
+      maxPrice?: number;
+      categoryFilter?: MinerCategoryFilter;
+      query?: string;
+    };
+
+    const safeMaxPrice = Math.max(
+      15,
+      Math.min(5000, Number(maxPrice) || 100),
+    );
+    const safeCategory: MinerCategoryFilter =
+      categoryFilter &&
+      ["all", "audio", "perifericos", "casa", "acessorios"].includes(
+        categoryFilter,
+      )
+        ? categoryFilter
+        : "all";
+    const safeQuery =
+      typeof query === "string" ? query.trim().slice(0, 120) : "";
+
+    try {
+      const result = await mineAffordableDeals({
+        maxPrice: safeMaxPrice,
+        categoryFilter: safeCategory,
+        query: safeQuery,
+      });
+      res.json(result);
+    } catch {
+      res.status(500).json({
+        error: "Não foi possível concluir a mineração no momento.",
+      });
     }
   });
 

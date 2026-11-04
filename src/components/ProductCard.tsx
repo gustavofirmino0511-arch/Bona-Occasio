@@ -23,7 +23,10 @@ export function ProductCard({ product, index = 0 }: Props) {
     >
       <Link
         to={`/produto/${product.id}`}
-        className="relative block aspect-[5/4] overflow-hidden bg-sand"
+        className={cn(
+          "relative block aspect-[5/4] overflow-hidden",
+          product.image.startsWith("https://") ? "bg-white p-3" : "bg-sand",
+        )}
       >
         <img
           src={product.image}
@@ -31,7 +34,12 @@ export function ProductCard({ product, index = 0 }: Props) {
           loading="lazy"
           decoding="async"
           referrerPolicy="no-referrer"
-          className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-103"
+          className={cn(
+            "h-full w-full transition-transform duration-500 group-hover:scale-103",
+            product.image.startsWith("https://")
+              ? "object-contain"
+              : "object-cover",
+          )}
         />
       </Link>
 
@@ -97,9 +105,9 @@ export function ProductCard({ product, index = 0 }: Props) {
               onClick={() => toggleTrayProduct(product)}
               aria-pressed={inTray}
               className={cn(
-                "inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors whitespace-nowrap shrink-0",
+                "inline-flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2.5 text-xs font-semibold transition-colors whitespace-nowrap shrink-0",
                 inTray
-                  ? "border-copper bg-copper text-cream"
+                  ? "border-forest bg-forest text-cream"
                   : "border-sand bg-cream text-forest hover:border-copper hover:text-copper",
               )}
             >
@@ -116,13 +124,15 @@ export function ProductCard({ product, index = 0 }: Props) {
               )}
             </button>
 
-            <Link
-              to={`/produto/${product.id}`}
-              className="inline-flex items-center justify-center gap-1 rounded-lg bg-forest px-3.5 py-2 text-xs font-semibold text-cream transition-colors hover:bg-forest-soft whitespace-nowrap shrink-0"
+            <a
+              href={product.affiliateUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-copper px-3.5 py-2.5 text-xs font-semibold text-white transition-colors hover:bg-copper-dark whitespace-nowrap shrink-0"
             >
-              Ver produto
+              Ir para o produto
               <ArrowUpRight className="size-3.5" />
-            </Link>
+            </a>
           </div>
         </div>
       </div>

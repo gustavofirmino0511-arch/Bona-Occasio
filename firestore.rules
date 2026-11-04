@@ -63,12 +63,12 @@ service cloud.firestore {
         data.shortName is string && data.shortName.size() >= 2 && data.shortName.size() <= 80 &&
         data.brand is string && data.brand.size() >= 1 && data.brand.size() <= 60 &&
         data.tagline is string && data.tagline.size() >= 2 && data.tagline.size() <= 400 &&
-        data.image is string && data.image.size() >= 5 && data.image.size() <= 50000 &&
+        data.image is string && data.image.size() >= 5 && data.image.size() <= 50000 && data.image.matches('^(https://[^\\s"<>]+|data:image/.*)$') &&
         data.price is number && data.price >= 0 && data.price <= 1000000 &&
         (!('originalPrice' in data) || (data.originalPrice is number && data.originalPrice >= 0 && data.originalPrice <= 1000000)) &&
         (!('installmentText' in data) || (data.installmentText is string && data.installmentText.size() <= 120)) &&
         data.category is string && data.category.size() >= 2 && data.category.size() <= 64 && data.category.matches('^[a-zA-Z0-9_\\-]+$') &&
-        data.affiliateUrl is string && data.affiliateUrl.size() >= 4 && data.affiliateUrl.size() <= 1000 &&
+        data.affiliateUrl is string && data.affiliateUrl.size() >= 8 && data.affiliateUrl.size() <= 1000 && data.affiliateUrl.matches('^https://[^\\s"<>]+$') &&
         (!('featured' in data) || data.featured is bool) &&
         data.idealFor is string && data.idealFor.size() >= 2 && data.idealFor.size() <= 300 &&
         data.highlightTitle is string && data.highlightTitle.size() >= 2 && data.highlightTitle.size() <= 120 &&

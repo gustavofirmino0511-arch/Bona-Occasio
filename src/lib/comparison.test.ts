@@ -12,81 +12,93 @@ import {
   calculatePriorityScore,
   getSpecPracticalExplanation,
 } from "./comparison";
+import type { Product } from "../types/product";
 import assert from "node:assert/strict";
 import test from "node:test";
 
-test("notebooks comparison identifies best performance vs best cost-benefit and head-to-head winners", () => {
-  const notebooks = products.filter((p) => p.category === "notebooks");
-  assert.ok(notebooks.length >= 3, "Should have at least 3 notebooks to compare");
+test("catalog contains ONLY real affiliate products and zero fake example links", () => {
+  assert.equal(products.length, 2, "Should contain only the 2 real earphones");
+  for (const p of products) {
+    assert.ok(
+      !p.affiliateUrl.includes("exemplo.com") && p.affiliateUrl !== "#",
+      `Product ${p.id} must have a real affiliate URL`,
+    );
+  }
+});
 
-  const vivobook = notebooks.find((p) => p.id === "notebook-vivobook-ryzen7");
-  const nitro = notebooks.find((p) => p.id === "notebook-acer-nitro-v15");
-  const ideapad = notebooks.find((p) => p.id === "notebook-ideapad-slim3");
+test("real earphones comparison identifies best performance vs lowest price and head-to-head winners", () => {
+  const p30i = products.find((p) => p.id === "audio-anker-soundcore-p30i");
+  const eletric = products.find((p) => p.id === "audio-eletric-teck-usbc");
 
-  assert.ok(vivobook && nitro && ideapad, "Core notebook models must exist");
+  assert.ok(p30i && eletric, "Both real earphone models must exist");
 
-  // 1. Custo-benefício analysis
-  const cbAnalysis = analyzeComparison(
-    [vivobook, nitro, ideapad],
-    "custo-beneficio",
-  );
+  const cbAnalysis = analyzeComparison([p30i, eletric], "custo-beneficio");
   assert.ok(cbAnalysis);
-  assert.equal(cbAnalysis.bestCostBenefit.id, "notebook-vivobook-ryzen7");
-  assert.equal(cbAnalysis.bestPerformance.id, "notebook-acer-nitro-v15");
-  assert.equal(cbAnalysis.lowestPrice.id, "notebook-ideapad-slim3");
+  assert.equal(cbAnalysis.bestCostBenefit.id, "audio-anker-soundcore-p30i");
+  assert.equal(cbAnalysis.bestPerformance.id, "audio-anker-soundcore-p30i");
+  assert.equal(cbAnalysis.lowestPrice.id, "audio-eletric-teck-usbc");
 
-  // Head-to-head winning labels
   assert.ok(
-    cbAnalysis.winningSpecLabelsByProductId["notebook-acer-nitro-v15"].includes(
-      "Placa de Vídeo (GPU)",
+    cbAnalysis.winningSpecLabelsByProductId["audio-anker-soundcore-p30i"].includes(
+      "Cancelamento de Ruído (ANC)",
     ),
-    "Acer Nitro V15 should win Placa de Vídeo (GPU)",
+    "Soundcore P30i should win Cancelamento de Ruído (ANC)",
   );
   assert.ok(
-    cbAnalysis.winningSpecLabelsByProductId["notebook-ideapad-slim3"].includes(
+    cbAnalysis.winningSpecLabelsByProductId["audio-eletric-teck-usbc"].includes(
       "Menor Preço",
     ),
-    "Lenovo IdeaPad Slim 3i should win Menor Preço",
+    "Eletric Teck USB-C should win Menor Preço",
   );
 
-  // Practical explanation on every spec
-  for (const spec of ideapad.specs) {
+  for (const spec of p30i.specs) {
     const note = getSpecPracticalExplanation(spec);
     assert.ok(note.length > 15, `Spec ${spec.key} must have a practical explanation`);
   }
 
-  // 2. Desempenho analysis must crown Acer Nitro V15 (RTX 4050)
-  const perfAnalysis = analyzeComparison(
-    [vivobook, nitro, ideapad],
-    "desempenho",
-  );
-  assert.ok(perfAnalysis);
-  assert.equal(perfAnalysis.winner.id, "notebook-acer-nitro-v15");
-  assert.ok(
-    perfAnalysis.specWinners["gpu"].includes("notebook-acer-nitro-v15"),
-    "Acer Nitro V15 with RTX 4050 should win GPU spec row",
-  );
-
-  // 3. Economia analysis must crown Lenovo IdeaPad Slim 3i
-  const econAnalysis = analyzeComparison(
-    [vivobook, nitro, ideapad],
-    "economia",
-  );
+  const econAnalysis = analyzeComparison([p30i, eletric], "economia");
   assert.ok(econAnalysis);
-  assert.equal(econAnalysis.winner.id, "notebook-ideapad-slim3");
+  assert.equal(econAnalysis.winner.id, "audio-eletric-teck-usbc");
 });
 
 test("calculatePriorityScore adapts dynamically to priority mode", () => {
-  const notebooks = products.filter((p) => p.category === "notebooks");
-  const nitro = notebooks.find((p) => p.id === "notebook-acer-nitro-v15")!;
-  const macbook = notebooks.find((p) => p.id === "notebook-macbook-air-m2")!;
+  const highMobility: Product = {
+    ...products[0],
+    id: "test-mob",
+    price: 250,
+    metrics: {
+      performance: 80,
+      costBenefit: 85,
+      battery: 98,
+      mobility: 98,
+      buildQuality: 90,
+    },
+  };
+  const heavyPerf: Product = {
+    ...products[0],
+    id: "test-perf",
+    price: 250,
+    metrics: {
+      performance: 98,
+      costBenefit: 85,
+      battery: 60,
+      mobility: 60,
+      buildQuality: 90,
+    },
+  };
 
-  const macMobility = calculatePriorityScore(macbook, "mobilidade", notebooks);
-  const nitroMobility = calculatePriorityScore(nitro, "mobilidade", notebooks);
+  const mobScoreA = calculatePriorityScore(highMobility, "mobilidade", [
+    highMobility,
+    heavyPerf,
+  ]);
+  const mobScoreB = calculatePriorityScore(heavyPerf, "mobilidade", [
+    highMobility,
+    heavyPerf,
+  ]);
 
   assert.ok(
-    macMobility > nitroMobility,
-    "MacBook Air M2 must score higher than gaming laptop on mobility & battery",
+    mobScoreA > mobScoreB,
+    "High battery/mobility product must score higher on mobility mode",
   );
 });
 
@@ -104,10 +116,10 @@ test("AI product analyzer structures product link into ready-to-compare Product 
 
   const built = buildProductFromAiDraft(
     draft,
-    "https://afil.exemplo.com/dell-i15",
+    "https://meli.la/real-dell",
   );
   assert.equal(built.price, 3399);
-  assert.equal(built.affiliateUrl, "https://afil.exemplo.com/dell-i15");
+  assert.equal(built.affiliateUrl, "https://meli.la/real-dell");
   assert.ok(built.image.startsWith("data:image/svg+xml"));
 });
 
@@ -142,3 +154,39 @@ test("meli.la USB-C earphone with compatibility text is classified as audio with
   assert.ok(draft.metrics.costBenefit >= 88);
 });
 
+test("meli.la Anker Soundcore P30i Bluetooth 5.4 ANC is analyzed without mid-word truncation and compared head-to-head", () => {
+  const title =
+    "Fone de Ouvido Bluetooth 5.4 soundcore P30i da Anker, Cancelamento de Ruído Adaptativo, Graves Poderosos, 45H de Reprodução, Estojo 2-em-1 com Suporte para Celular, IP54, Fone sem fio TWS, Preto";
+  const draft = heuristicAnalyzeProductInput(title, undefined, {
+    originalUrl: "https://meli.la/2YTze8J",
+    title,
+    detectedPrice: 199.5,
+    detectedOriginalPrice: 389,
+    detectedBrand: "Soundcore",
+    imageUrl:
+      "https://http2.mlstatic.com/D_NQ_NP_2X_760745-MLA95700724020_102025-F.webp",
+  });
+
+  assert.equal(draft.category, "audio");
+  assert.equal(draft.brand, "Soundcore");
+  assert.equal(draft.price, 199.5);
+  assert.equal(draft.originalPrice, 389);
+  assert.ok(
+    !draft.name.endsWith("Cancelamen"),
+    `Product name should not truncate mid-word: ${draft.name}`,
+  );
+  assert.ok(
+    draft.shortName.toLowerCase().includes("p30i") ||
+      draft.shortName.toLowerCase().includes("soundcore"),
+    `shortName should preserve model/brand: ${draft.shortName}`,
+  );
+
+  const p30i = products.find((p) => p.id === "audio-anker-soundcore-p30i");
+  const eletric = products.find((p) => p.id === "audio-eletric-teck-usbc");
+  assert.ok(p30i && eletric, "Both user affiliate audio products must exist in catalog");
+
+  const audioComparison = analyzeComparison([p30i, eletric], "desempenho");
+  assert.ok(audioComparison);
+  assert.equal(audioComparison.bestPerformance.id, "audio-anker-soundcore-p30i");
+  assert.equal(audioComparison.lowestPrice.id, "audio-eletric-teck-usbc");
+});

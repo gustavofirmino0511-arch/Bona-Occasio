@@ -5,6 +5,12 @@ import {
   createNotebookSvg,
   createSmartphoneSvg,
 } from "../data/productImages";
+import {
+  isSafePublicHttpUrl,
+  sanitizeAffiliateUrl,
+  sanitizeImageUrl,
+  sanitizePlainText,
+} from "./security";
 import type {
   AiCatalogAdviceResponse,
   AiProductDraft,
@@ -237,6 +243,11 @@ export async function resolveProductUrlContent(
   }
 
   const targetUrl = urlMatch[0].trim();
+  // Bloqueio Anti-SSRF: rejeita IPs locais, privados ou endpoints de metadados
+  if (!isSafePublicHttpUrl(targetUrl)) {
+    return {};
+  }
+
   const result: ResolvedUrlMetadata = {
     originalUrl: targetUrl,
   };
@@ -297,25 +308,26 @@ export async function resolveProductUrlContent(
   }
 
   // 2. Leitor Universal Jina Reader (segue redirecionamentos de links curtos como meli.la e extrai título, preço, marca e foto)
-  try {
-    const jinaRes = await fetch(`https://r.jina.ai/${targetUrl}`, {
-      headers: {
-        Accept: "application/json",
-        "X-Return-Format": "markdown",
-      },
-      signal: AbortSignal.timeout(6500),
-    });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const jinaRes = await fetch(`https://r.jina.ai/${targetUrl}`, {
+        headers: {
+          Accept: "application/json",
+          "X-Return-Format": "markdown",
+        },
+        signal: AbortSignal.timeout(12000),
+      });
 
-    if (jinaRes.ok) {
-      const jinaJson = (await jinaRes.json()) as {
-        data?: {
-          title?: string;
-          description?: string;
-          url?: string;
-          finalUrl?: string;
-          content?: string;
+      if (jinaRes.ok) {
+        const jinaJson = (await jinaRes.json()) as {
+          data?: {
+            title?: string;
+            description?: string;
+            url?: string;
+            finalUrl?: string;
+            content?: string;
+          };
         };
-      };
       const data = jinaJson.data;
       if (data) {
         const finalUrl = data.finalUrl || data.url || targetUrl;
@@ -443,8 +455,9 @@ export async function resolveProductUrlContent(
         }
       }
     }
-  } catch {
-    // Continua para AllOrigins fallback
+    } catch {
+      // Se falhar na primeira tentativa (ex: link curto frio), tenta mais uma vez ou segue para AllOrigins
+    }
   }
 
   // 3. Fallback via AllOrigins (lê <title>, og:title, og:image e response url final)
@@ -534,44 +547,70 @@ export function buildProductFromAiDraft(
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/(^-|-$)/g, "");
 
-  const customImage =
-    draft.image &&
-    (draft.image.startsWith("https://") || draft.image.startsWith("data:image/"))
-      ? draft.image.trim()
-      : generateProductImageForDraft(draft);
+  const studioSvgFallback = generateProductImageForDraft(draft);
+  const customImage = draft.image
+    ? sanitizeImageUrl(draft.image, studioSvgFallback)
+    : studioSvgFallback;
+
+  const cleanPrice = Math.max(
+    1,
+    Math.min(1000000, Number(draft.price) || 999),
+  );
 
   return {
     id: `${draft.category}-${slug}-${Date.now().toString().slice(-4)}`,
-    name: draft.name,
-    shortName: draft.shortName,
-    brand: draft.brand,
-    tagline: draft.tagline,
+    name: sanitizePlainText(draft.name, 160) || "Produto Selecionado",
+    shortName: sanitizePlainText(draft.shortName, 80) || "Produto",
+    brand: sanitizePlainText(draft.brand, 60) || "Marca",
+    tagline: sanitizePlainText(draft.tagline, 400) || "Oferta selecionada",
     image: customImage,
-    price: Number(draft.price) || 999,
-    originalPrice: draft.originalPrice ? Number(draft.originalPrice) : undefined,
+    price: cleanPrice,
+    originalPrice:
+      draft.originalPrice && Number(draft.originalPrice) > cleanPrice
+        ? Math.min(1000000, Number(draft.originalPrice))
+        : undefined,
     installmentText:
-      draft.installmentText ||
-      `Em até 10x de R$ ${((Number(draft.price) || 999) / 10).toFixed(2).replace(".", ",")} sem juros`,
-    category: draft.category,
-    affiliateUrl:
-      affiliateUrl && affiliateUrl.trim().length > 0
-        ? affiliateUrl.trim()
-        : "https://exemplo.com/afiliado/novo-produto",
+      sanitizePlainText(draft.installmentText, 120) ||
+      `Em até 10x de R$ ${(cleanPrice / 10).toFixed(2).replace(".", ",")} sem juros`,
+    category: draft.category.replace(/[^a-zA-Z0-9_-]/g, "-").slice(0, 64),
+    affiliateUrl: sanitizeAffiliateUrl(affiliateUrl),
     featured: true,
-    idealFor: draft.idealFor,
-    highlightTitle: draft.highlightTitle,
+    idealFor: sanitizePlainText(draft.idealFor, 300) || "Uso diário",
+    highlightTitle:
+      sanitizePlainText(draft.highlightTitle, 120) || "Destaque Técnico",
     rating: 4.8,
     reviewCount: 340,
     metrics: {
-      performance: Math.min(100, Math.max(50, Math.round(draft.metrics.performance))),
-      costBenefit: Math.min(100, Math.max(50, Math.round(draft.metrics.costBenefit))),
+      performance: Math.min(
+        100,
+        Math.max(50, Math.round(draft.metrics.performance)),
+      ),
+      costBenefit: Math.min(
+        100,
+        Math.max(50, Math.round(draft.metrics.costBenefit)),
+      ),
       battery: Math.min(100, Math.max(50, Math.round(draft.metrics.battery))),
       mobility: Math.min(100, Math.max(50, Math.round(draft.metrics.mobility))),
-      buildQuality: Math.min(100, Math.max(50, Math.round(draft.metrics.buildQuality))),
+      buildQuality: Math.min(
+        100,
+        Math.max(50, Math.round(draft.metrics.buildQuality)),
+      ),
     },
-    specs: draft.specs,
-    pros: draft.pros,
-    cons: draft.cons,
+    specs: draft.specs.slice(0, 20).map((s) => ({
+      key: sanitizePlainText(s.key, 64) || "spec",
+      label: sanitizePlainText(s.label, 120) || "Item",
+      value: sanitizePlainText(s.value, 300) || "-",
+      score: Math.min(100, Math.max(0, Math.round(Number(s.score) || 80))),
+      usageNote: s.usageNote ? sanitizePlainText(s.usageNote, 400) : undefined,
+    })),
+    pros: draft.pros
+      .slice(0, 15)
+      .map((p) => sanitizePlainText(p, 300))
+      .filter(Boolean),
+    cons: draft.cons
+      .slice(0, 15)
+      .map((c) => sanitizePlainText(c, 300))
+      .filter(Boolean),
   };
 }
 
@@ -643,6 +682,68 @@ export function heuristicAnalyzeProductInput(
         .toLowerCase()
         .replace(/\b\w/g, (c) => c.toUpperCase())
     : undefined;
+
+  const formatProductNames = (
+    rawTitleStr: string,
+    brandStr: string,
+    fallbackFull: string,
+  ): { name: string; shortName: string } => {
+    const cleaned = rawTitleStr
+      .replace(
+        /\b(compat[íi]vel\s+(com|para|p\/)?|ideal\s+para|indicado\s+para|serve\s+(em|para))\b.*$/i,
+        "",
+      )
+      .replace(/\s+/g, " ")
+      .trim();
+
+    if (cleaned.length <= 6) {
+      return {
+        name: fallbackFull,
+        shortName: fallbackFull.split(" ").slice(0, 4).join(" "),
+      };
+    }
+
+    // Se tiver vírgulas separando especificações longas, pega a primeira cláusula principal se ela já tiver o nome do modelo
+    const firstClause = cleaned.split(",")[0]?.trim() || cleaned;
+    let name =
+      firstClause.length >= 18 && firstClause.length <= 68
+        ? firstClause
+        : cleaned;
+
+    if (name.length > 66) {
+      const cut = name.slice(0, 66);
+      const lastSpace = cut.lastIndexOf(" ");
+      name = (lastSpace > 24 ? cut.slice(0, lastSpace) : cut).replace(
+        /[,;:\-–—]+$/,
+        "",
+      );
+    }
+
+    // Gera um shortName inteligente preservando marca/modelo em vez de apenas "Fone de Ouvido Bluetooth"
+    const genericPrefix =
+      /^(fones?\s+de\s+ouvido|headphone|headset|earbuds|smartphone|celular|notebook|laptop|teclado\s+mec[âa]nico|monitor\s+gamer)\s+(bluetooth\s+(\d\.\d\s+)?)?/i;
+    const strippedForShort = name.replace(genericPrefix, "").trim();
+    const shortWords = (strippedForShort.length >= 5 ? strippedForShort : name)
+      .replace(/,/g, "")
+      .split(/\s+/)
+      .filter((w) => !/^(da|de|do|com|para|p\/|e|o|a)$/i.test(w))
+      .slice(0, 4);
+
+    let shortName = shortWords.join(" ");
+    if (
+      brandStr &&
+      brandStr.length <= 14 &&
+      !shortName.toLowerCase().includes(brandStr.toLowerCase()) &&
+      shortName.length < 18
+    ) {
+      shortName = `${shortName} ${brandStr}`.trim();
+    }
+
+    return {
+      name,
+      shortName: shortName || name.split(" ").slice(0, 4).join(" "),
+    };
+  };
 
   // Isola o assunto principal do produto removendo trechos "Compatível com iPhone / Samsung / Notebook..."
   const primarySubject = (cleanTitle || lower)
@@ -1300,11 +1401,11 @@ export function heuristicAnalyzeProductInput(
                     ? "Eletric Teck"
                     : "Áudio");
 
-    const name =
-      cleanTitle.length > 6
-        ? cleanTitle.slice(0, 64)
-        : `${brand} ${isWired ? "USB-C Com Microfone" : hasAnc ? "Bluetooth com Cancelamento de Ruído ANC" : "Bluetooth Sem Fio"}`;
-    const shortName = name.split(" ").slice(0, 4).join(" ");
+    const { name, shortName } = formatProductNames(
+      cleanTitle,
+      brand,
+      `${brand} ${isWired ? "USB-C Com Microfone" : hasAnc ? "Bluetooth com Cancelamento de Ruído ANC" : "Bluetooth Sem Fio"}`,
+    );
 
     const origPrice =
       resolvedMeta?.detectedOriginalPrice || Math.round(price * 1.22);

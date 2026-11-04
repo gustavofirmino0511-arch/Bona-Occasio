@@ -8,7 +8,12 @@ interface Props {
 }
 
 export function CategoryFilter({ active, onChange }: Props) {
-  const { catalogCategories } = useCompare();
+  const { catalogCategories, catalogProducts } = useCompare();
+
+  const visibleCategories = catalogCategories.filter(
+    (c) =>
+      c.id === "all" || catalogProducts.some((p) => p.category === c.id),
+  );
 
   return (
     <div
@@ -17,7 +22,7 @@ export function CategoryFilter({ active, onChange }: Props) {
       aria-label="Filtrar por categoria"
       className="flex flex-wrap items-center gap-2"
     >
-      {catalogCategories.map((c) => {
+      {visibleCategories.map((c) => {
         const isActive = active === c.id;
         return (
           <button
