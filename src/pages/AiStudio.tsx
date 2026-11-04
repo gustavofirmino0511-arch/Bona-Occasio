@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
   ArrowRight,
@@ -31,8 +31,10 @@ import {
   resolveProductUrlContent,
 } from "@/lib/aiCurator";
 import {
+  createDealThumbnailSvg,
   filterAndRankMinedDeals,
   mineAffordableDeals,
+  MONITORED_RADARS_INFO,
   type MinedDeal,
   type MinerCategoryFilter,
 } from "@/lib/dealMiner";
@@ -126,14 +128,15 @@ export function AiStudio() {
   const [editIdealFor, setEditIdealFor] = useState("");
 
   // Estado do Sistema de Mineração de Achadinhos & Promoções Baratas (Sem Chave de API)
-  const [minerMaxPrice, setMinerMaxPrice] = useState<number>(100);
+  const [minerMaxPrice, setMinerMaxPrice] = useState<number>(150);
   const [minerCategory, setMinerCategory] =
     useState<MinerCategoryFilter>("all");
   const [minerQuery, setMinerQuery] = useState("");
   const [isMiningDeals, setIsMiningDeals] = useState(false);
   const [liveWebDealsCount, setLiveWebDealsCount] = useState(0);
+  const [showAllMinedDeals, setShowAllMinedDeals] = useState(false);
   const [minedDeals, setMinedDeals] = useState<MinedDeal[]>(() =>
-    filterAndRankMinedDeals([], { maxPrice: 100, categoryFilter: "all" }),
+    filterAndRankMinedDeals([], { maxPrice: 150, categoryFilter: "all" }),
   );
   const [loadedMinedDealId, setLoadedMinedDealId] = useState<string | null>(
     null,
@@ -143,9 +146,11 @@ export function AiStudio() {
     nextMaxPrice = minerMaxPrice,
     nextCategory = minerCategory,
     nextQuery = minerQuery,
+    forceRefresh = false,
   ) => {
     setMinerMaxPrice(nextMaxPrice);
     setMinerCategory(nextCategory);
+    setShowAllMinedDeals(false);
     setIsMiningDeals(true);
     try {
       const res = await fetch("/api/miner/search", {
@@ -155,6 +160,7 @@ export function AiStudio() {
           maxPrice: nextMaxPrice,
           categoryFilter: nextCategory,
           query: nextQuery,
+          forceRefresh,
         }),
       });
       if (
@@ -175,6 +181,7 @@ export function AiStudio() {
         maxPrice: nextMaxPrice,
         categoryFilter: nextCategory,
         query: nextQuery,
+        forceRefresh,
       });
       setMinedDeals(fallback.deals);
       setLiveWebDealsCount(fallback.liveCount);
@@ -189,6 +196,14 @@ export function AiStudio() {
       setIsMiningDeals(false);
     }
   };
+
+  // Dispara automaticamente a varredura AO VIVO na internet assim que o dono desbloqueia o /admin
+  useEffect(() => {
+    if (isAdminAuthenticated) {
+      void handleRunMiner(150, "all", "");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdminAuthenticated]);
 
   const handleLoadMinedDealIntoImporter = (deal: MinedDeal) => {
     setLoadedMinedDealId(deal.id);
@@ -724,34 +739,61 @@ export function AiStudio() {
           <button
             type="button"
             disabled={isMiningDeals}
-            onClick={() => void handleRunMiner()}
+            onClick={() =>
+              void handleRunMiner(minerMaxPrice, minerCategory, minerQuery, true)
+            }
             className="inline-flex items-center justify-center gap-2 rounded-xl bg-forest px-5 py-3.5 text-xs font-bold text-cream transition-colors hover:bg-forest-soft disabled:opacity-60 shrink-0"
           >
             {isMiningDeals ? (
               <>
                 <Loader2 className="size-4 animate-spin" />
-                Varrendo ofertas ao vivo na web...
+                Varrendo 4 radares de vendas recentes ao vivo...
               </>
             ) : (
               <>
                 <Flame className="size-4 text-copper" />
-                Buscar Promoções Ao Vivo Agora
+                Sortear & Buscar Novas Ofertas Ao Vivo Agora
               </>
             )}
           </button>
         </div>
 
+        {/* Painel de Transparência: Onde estamos buscando e como medimos produtos vendidos recentemente */}
+        <div className="mt-5 rounded-xl border border-forest/15 bg-forest/5 p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs font-bold text-forest">
+              📡 4 Radares de Vendas Recentes Monitorados Simultaneamente (Cruzando Mercado Livre, Amazon, Magalu, Casas Bahia, Shopee e KaBuM!):
+            </p>
+            <span className="rounded-md bg-white px-2.5 py-0.5 text-[11px] font-semibold text-copper-dark">
+              Filtro ativo: apenas vendas e ofertas das últimas horas / hoje
+            </span>
+          </div>
+          <div className="mt-2.5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+            {MONITORED_RADARS_INFO.map((radar, idx) => (
+              <div
+                key={radar.id}
+                className="rounded-lg border border-sand/80 bg-white/90 px-3 py-2 text-[11px]"
+              >
+                <p className="font-bold text-forest">
+                  {idx + 1}. {radar.name}
+                </p>
+                <p className="mt-0.5 leading-snug text-stone">{radar.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
         {/* Filtros de Preço Máximo e Categoria do Minerador */}
         <div className="mt-6 grid gap-4 lg:grid-cols-12">
-          <div className="lg:col-span-5">
+          <div className="lg:col-span-4">
             <span className="block text-xs font-semibold text-forest">
               1. Teto de Preço (Foco em Compra Fácil):
             </span>
             <div className="mt-2 flex flex-wrap gap-2">
               {[
-                { max: 50, label: "Até R$ 50 (Impulso)" },
-                { max: 100, label: "Até R$ 100 (Campeões)" },
-                { max: 200, label: "Até R$ 200" },
+                { max: 50, label: "Até R$ 50" },
+                { max: 100, label: "Até R$ 100" },
+                { max: 150, label: "Até R$ 150" },
                 { max: 350, label: "Até R$ 350" },
               ].map((tier) => (
                 <button
@@ -761,7 +803,7 @@ export function AiStudio() {
                     void handleRunMiner(tier.max, minerCategory, minerQuery)
                   }
                   className={cn(
-                    "rounded-xl px-3.5 py-2 text-xs font-semibold transition-colors",
+                    "rounded-xl px-3 py-2 text-xs font-semibold transition-colors",
                     minerMaxPrice === tier.max
                       ? "bg-forest text-cream"
                       : "border border-sand bg-cream/70 text-forest hover:border-copper",
@@ -773,7 +815,7 @@ export function AiStudio() {
             </div>
           </div>
 
-          <div className="lg:col-span-4">
+          <div className="lg:col-span-5">
             <span className="block text-xs font-semibold text-forest">
               2. Nicho de Produto:
             </span>
@@ -781,9 +823,10 @@ export function AiStudio() {
               {(
                 [
                   { id: "all", label: "Todos" },
+                  { id: "casa", label: "Casa, Móveis & Cama" },
+                  { id: "moda", label: "Moda, Tênis & Roupas" },
                   { id: "audio", label: "Fones & Áudio" },
                   { id: "perifericos", label: "Setup & Celular" },
-                  { id: "casa", label: "Casa & Cozinha" },
                 ] as { id: MinerCategoryFilter; label: string }[]
               ).map((cat) => (
                 <button
@@ -810,7 +853,7 @@ export function AiStudio() {
               htmlFor="miner-search-query"
               className="block text-xs font-semibold text-forest"
             >
-              3. Filtrar por palavra (opcional):
+              3. Buscar item (ex: móveis, cortina, tênis):
             </label>
             <div className="mt-2 flex gap-1.5">
               <input
@@ -824,7 +867,7 @@ export function AiStudio() {
                     void handleRunMiner(minerMaxPrice, minerCategory, minerQuery);
                   }
                 }}
-                placeholder="Ex: fone, mouse, inox..."
+                placeholder="Ex: móveis, cortinas, cobertor, tênis..."
                 className="w-full rounded-xl border border-sand bg-cream/60 px-3 py-2 text-xs text-ink placeholder:text-stone/60 focus:border-forest focus:outline-none"
               />
               <button
@@ -838,17 +881,57 @@ export function AiStudio() {
                 <Search className="size-3.5" />
               </button>
             </div>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              <span className="text-[11px] text-stone">Buscas rápidas:</span>
+              {[
+                "móveis",
+                "cortinas",
+                "cobertor",
+                "roupa de cama",
+                "tênis",
+                "camisa",
+              ].map((quickTerm) => (
+                <button
+                  key={quickTerm}
+                  type="button"
+                  onClick={() => {
+                    setMinerQuery(quickTerm);
+                    void handleRunMiner(minerMaxPrice, "all", quickTerm);
+                  }}
+                  className="rounded-md border border-sand bg-cream/80 px-2 py-0.5 text-[11px] font-medium text-forest hover:border-copper hover:text-copper"
+                >
+                  {quickTerm}
+                </button>
+              ))}
+              {minerQuery.trim().length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMinerQuery("");
+                    void handleRunMiner(minerMaxPrice, minerCategory, "");
+                  }}
+                  className="rounded-md bg-copper/15 px-2 py-0.5 text-[11px] font-bold text-copper-dark hover:bg-copper/25"
+                >
+                  Limpar busca ×
+                </button>
+              )}
+            </div>
           </div>
         </div>
 
-        {/* Grade de Achadinhos Minerados */}
+        {/* Grade de Achadinhos Minerados (5 iniciais + Mostrar Mais p/ abrir todas as ~20+ opções) */}
         <div className="mt-6 flex flex-wrap items-center justify-between gap-2 text-xs text-stone">
           <span>
-            Mostrando <strong className="text-forest">{minedDeals.length}</strong>{" "}
-            achadinhos de alto giro abaixo de{" "}
-            <strong className="text-forest">{formatBRL(minerMaxPrice)}</strong>
+            Encontradas <strong className="text-forest">{minedDeals.length}</strong>{" "}
+            ofertas de alto giro (exibindo{" "}
+            <strong className="text-forest">
+              {showAllMinedDeals
+                ? minedDeals.length
+                : Math.min(5, minedDeals.length)}
+            </strong>{" "}
+            de <strong className="text-forest">{minedDeals.length}</strong>)
             {liveWebDealsCount > 0
-              ? ` (${liveWebDealsCount} capturados ao vivo agora na web)`
+              ? ` · ${liveWebDealsCount} capturadas ao vivo na web`
               : ""}
           </span>
           <span className="font-medium text-copper-dark">
@@ -857,98 +940,162 @@ export function AiStudio() {
         </div>
 
         <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {minedDeals.map((deal) => {
-            const isLoaded = loadedMinedDealId === deal.id;
-            return (
-              <div
-                key={deal.id}
-                className={cn(
-                  "flex flex-col justify-between rounded-2xl border p-4 transition-all",
-                  isLoaded
-                    ? "border-2 border-copper bg-copper/5"
-                    : "border-sand bg-cream/40 hover:border-forest/40",
-                )}
-              >
-                <div>
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-md bg-forest px-2 py-0.5 font-mono text-[11px] font-bold text-cream tabular-nums">
-                      -{deal.discountPercent}% OFF · Nota {deal.bargainScore}/100
-                    </span>
-                    <span className="text-[11px] font-semibold text-copper-dark">
-                      {deal.isLiveWebDeal ? "Ao Vivo na Web" : deal.storeName}
-                    </span>
-                  </div>
-
-                  <div className="mt-3 flex items-start gap-3">
-                    <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-sand bg-white p-1.5">
-                      <img
-                        src={deal.image}
-                        alt={deal.title}
-                        className="max-h-full max-w-full object-contain"
-                        loading="lazy"
-                      />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-[11px] font-bold uppercase tracking-wider text-stone">
-                        {deal.brand}
-                      </p>
-                      <h3 className="mt-0.5 line-clamp-2 text-xs font-bold leading-snug text-forest sm:text-sm">
-                        {deal.title}
-                      </h3>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 flex items-baseline gap-2 rounded-xl border border-sand/80 bg-white px-3 py-2">
-                    <span className="font-mono text-lg font-bold text-forest tabular-nums">
-                      {formatBRL(deal.price)}
-                    </span>
-                    {deal.originalPrice > deal.price && (
-                      <span className="font-mono text-xs text-stone line-through tabular-nums">
-                        {formatBRL(deal.originalPrice)}
+          {(showAllMinedDeals ? minedDeals : minedDeals.slice(0, 5)).map(
+            (deal) => {
+              const isLoaded = loadedMinedDealId === deal.id;
+              return (
+                <div
+                  key={deal.id}
+                  className={cn(
+                    "flex flex-col justify-between rounded-2xl border p-4 transition-all",
+                    isLoaded
+                      ? "border-2 border-copper bg-copper/5"
+                      : "border-sand bg-cream/40 hover:border-forest/40",
+                  )}
+                >
+                  <div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="inline-flex items-center gap-1 rounded-md bg-forest px-2 py-0.5 font-mono text-[11px] font-bold text-cream tabular-nums">
+                        -{deal.discountPercent}% OFF · Nota {deal.bargainScore}/100
                       </span>
+                      <span
+                        className={cn(
+                          "rounded-md px-2 py-0.5 text-[11px] font-bold",
+                          deal.isLiveWebDeal
+                            ? "bg-copper/15 text-copper-dark"
+                            : "text-stone",
+                        )}
+                      >
+                        {deal.isLiveWebDeal
+                          ? "⚡ Ao Vivo Hoje na Web"
+                          : "Sugestão Campeã"}
+                      </span>
+                    </div>
+
+                    <div className="mt-3 flex items-start gap-3">
+                      <div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-sand bg-white p-1.5">
+                        <img
+                          src={deal.image}
+                          alt={deal.title}
+                          onError={(e) => {
+                            const target = e.currentTarget;
+                            const fallback = createDealThumbnailSvg(
+                              deal.title,
+                              deal.brand,
+                              deal.category,
+                              deal.price,
+                            );
+                            if (target.src !== fallback) {
+                              target.src = fallback;
+                            }
+                          }}
+                          className="max-h-full max-w-full object-contain"
+                          loading="lazy"
+                        />
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-[11px] font-bold uppercase tracking-wider text-stone">
+                          {deal.brand}
+                        </p>
+                        <h3 className="mt-0.5 line-clamp-2 text-xs font-bold leading-snug text-forest sm:text-sm">
+                          {deal.title}
+                        </h3>
+                      </div>
+                    </div>
+
+                     <div className="mt-3 flex items-baseline gap-2 rounded-xl border border-sand/80 bg-white px-3 py-2">
+                      <span className="font-mono text-lg font-bold text-forest tabular-nums">
+                        {formatBRL(deal.price)}
+                      </span>
+                      {deal.originalPrice > deal.price && (
+                        <span className="font-mono text-xs text-stone line-through tabular-nums">
+                          {formatBRL(deal.originalPrice)}
+                        </span>
+                      )}
+                      <span className="ml-auto text-[11px] font-semibold text-copper-dark">
+                        {deal.recencyLabel || "Vendas ativas hoje"}
+                      </span>
+                    </div>
+
+                    {/* Termômetro de Onde Está Sendo Vendido & Recência */}
+                    {(deal.radarSources?.length || deal.trendingSignal) && (
+                      <div className="mt-2.5 rounded-xl border border-forest/15 bg-forest/5 px-3 py-2">
+                        {deal.trendingSignal && (
+                          <p className="text-[11px] font-bold leading-snug text-forest">
+                            {deal.trendingSignal}
+                          </p>
+                        )}
+                        {deal.radarSources && deal.radarSources.length > 0 && (
+                          <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                            <span className="text-[10px] font-semibold text-stone">
+                              Detectado em:
+                            </span>
+                            {deal.radarSources.map((src) => (
+                              <span
+                                key={src}
+                                className="rounded bg-white px-1.5 py-0.5 text-[10px] font-bold text-copper-dark border border-sand"
+                              >
+                                {src}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
-                    <span className="ml-auto text-[11px] font-semibold text-copper-dark">
-                      Compra fácil
-                    </span>
+
+                    <p className="mt-2.5 text-xs leading-relaxed text-stone">
+                      <strong className="text-forest">Por que vende muito: </strong>
+                      {deal.whyItSells}
+                    </p>
                   </div>
 
-                  <p className="mt-2.5 text-xs leading-relaxed text-stone">
-                    <strong className="text-forest">Por que vende muito: </strong>
-                    {deal.whyItSells}
-                  </p>
-                </div>
+                  <div className="mt-4 space-y-2 border-t border-sand/80 pt-3">
+                    <a
+                      href={deal.mercadoLivreSearchUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-forest/30 bg-white px-3 py-2 text-xs font-semibold text-forest transition-colors hover:bg-forest hover:text-cream"
+                    >
+                      1. Abrir no Mercado Livre (Pegar Link)
+                      <ExternalLink className="size-3.5" />
+                    </a>
 
-                <div className="mt-4 space-y-2 border-t border-sand/80 pt-3">
-                  <a
-                    href={deal.mercadoLivreSearchUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex w-full items-center justify-center gap-1.5 rounded-xl border border-forest/30 bg-white px-3 py-2 text-xs font-semibold text-forest transition-colors hover:bg-forest hover:text-cream"
-                  >
-                    1. Abrir no Mercado Livre (Pegar Link)
-                    <ExternalLink className="size-3.5" />
-                  </a>
-
-                  <button
-                    type="button"
-                    onClick={() => handleLoadMinedDealIntoImporter(deal)}
-                    className={cn(
-                      "inline-flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-colors",
-                      isLoaded
-                        ? "bg-forest text-cream"
-                        : "bg-copper text-cream hover:bg-copper-soft",
-                    )}
-                  >
-                    <Sparkles className="size-3.5" />
-                    {isLoaded
-                      ? "Carregado no Cadastro Abaixo ✓"
-                      : "2. Carregar Ficha no Cadastro IA ↓"}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => handleLoadMinedDealIntoImporter(deal)}
+                      className={cn(
+                        "inline-flex w-full items-center justify-center gap-1.5 rounded-xl px-3 py-2.5 text-xs font-bold transition-colors",
+                        isLoaded
+                          ? "bg-forest text-cream"
+                          : "bg-copper text-cream hover:bg-copper-soft",
+                      )}
+                    >
+                      <Sparkles className="size-3.5" />
+                      {isLoaded
+                        ? "Carregado no Cadastro Abaixo ✓"
+                        : "2. Carregar Ficha no Cadastro IA ↓"}
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            },
+          )}
         </div>
+
+        {minedDeals.length > 5 && (
+          <div className="mt-6 flex justify-center">
+            <button
+              type="button"
+              id="miner-toggle-show-more-btn"
+              onClick={() => setShowAllMinedDeals((prev) => !prev)}
+              className="inline-flex items-center justify-center gap-2 rounded-xl border-2 border-forest bg-forest/5 px-6 py-3 text-xs font-bold text-forest transition-colors hover:bg-forest hover:text-cream sm:text-sm"
+            >
+              {showAllMinedDeals
+                ? "Mostrar menos (recolher para as 5 primeiras ofertas)"
+                : `Mostrar mais ofertas (+${minedDeals.length - 5} opções — abrir todas as ${minedDeals.length} ofertas)`}
+            </button>
+          </div>
+        )}
       </section>
 
       <div id="secao-cadastro-ia" className="mt-12 grid gap-10 lg:grid-cols-12">

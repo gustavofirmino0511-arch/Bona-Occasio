@@ -3,6 +3,8 @@ export type CategoryId =
   | "smartphones"
   | "audio"
   | "perifericos"
+  | "casa"
+  | "moda"
   | string;
 
 export type ComparisonPriority =

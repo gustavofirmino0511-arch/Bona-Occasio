@@ -24,7 +24,17 @@ export const categories: Category[] = [
   {
     id: "perifericos",
     label: "Periféricos & Setup",
-    description: "Teclados mecânicos, switches, conectividade e ergonomia",
+    description: "Teclados mecânicos, mouses, conectividade e ergonomia",
+  },
+  {
+    id: "casa",
+    label: "Casa, Móveis & Cama",
+    description: "Móveis, cortinas, cobertores, roupa de cama, cozinha e utilidades domésticas",
+  },
+  {
+    id: "moda",
+    label: "Moda, Tênis & Roupas",
+    description: "Tênis, camisas, camisetas, moda masculina e feminina, roupas fitness e calçados",
   },
 ];
 

@@ -1534,7 +1534,295 @@ export function heuristicAnalyzeProductInput(
   }
 
   // ============================================================================
-  // 4. MONITORES, CADEIRAS, SMARTWATCHES, ELETROS, GAMES & PERIFÉRICOS EM GERAL
+  // 4. MODA, TÊNIS, CAMISAS & ROUPAS (MASCULINO E FEMININO)
+  // ============================================================================
+  const lowerNorm = lower.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  const isFashionOrFootwear =
+    /\b(tenis|sapatenis|sapato|sandalia|chinelo|rasteirinha|bota|coturno|camisa|camiseta|blusa|vestido|calca|legging|bermuda|short|shorts|moletom|jaqueta|casaco|corta-vento|corta vento|meia|meias|cueca|cuecas|conjunto fitness|top fitness|olympikus|hering|lupo|zorba|vizzano|beira rio|mormaii)\b/.test(
+      lowerNorm,
+    );
+
+  if (isFashionOrFootwear) {
+    const isFootwear =
+      /\b(tenis|sapatenis|sapato|sandalia|chinelo|rasteirinha|bota|coturno|olympikus|vizzano|beira rio|runfalcon)\b/.test(
+        lowerNorm,
+      );
+    const isKit = /\b(kit|conjunto|pacote|pares)\b/.test(lowerNorm);
+    const isSport =
+      /\b(dry fit|academia|treino|corrida|caminhada|esportiv|fitness|legging|suplex|olympikus|adidas|nike)\b/.test(
+        lowerNorm,
+      );
+
+    const price = detectedPrice || (isFootwear ? 99.9 : isKit ? 64.9 : 49.9);
+    const originalPrice =
+      resolvedMeta?.detectedOriginalPrice &&
+      resolvedMeta.detectedOriginalPrice > price
+        ? resolvedMeta.detectedOriginalPrice
+        : Math.round(price * 1.45 * 10) / 10;
+
+    const brand =
+      resolvedBrand ||
+      (lowerNorm.includes("olympikus")
+        ? "Olympikus"
+        : lowerNorm.includes("adidas")
+          ? "Adidas"
+          : lowerNorm.includes("nike")
+            ? "Nike"
+            : lowerNorm.includes("hering")
+              ? "Hering"
+              : lowerNorm.includes("lupo")
+                ? "Lupo"
+                : lowerNorm.includes("vizzano")
+                  ? "Vizzano"
+                  : lowerNorm.includes("beira rio")
+                    ? "Beira Rio"
+                    : lowerNorm.includes("zorba")
+                      ? "Zorba"
+                      : "Moda Seleção");
+
+    const { name, shortName } = formatProductNames(
+      cleanTitle,
+      brand,
+      "Peça de Moda & Calçados Selecionada",
+    );
+
+    const materialScore = clampScore(isSport || isFootwear ? 93 : 91);
+    const comfortScore = clampScore(isFootwear ? 95 : 93);
+    const durabilityScore = clampScore(91);
+    const versatilityScore = clampScore(isKit ? 96 : 93);
+    const cbScore = clampScore(price <= 80 ? 98 : price <= 140 ? 95 : 91);
+
+    return {
+      name,
+      shortName,
+      brand,
+      image: resolvedImage,
+      tagline: `${name} — selecionado pelo conforto no corpo, durabilidade das costuras/solado e excelente custo por peça (R$ ${price.toFixed(2).replace(".", ",")}).`,
+      price,
+      originalPrice,
+      installmentText: `Por R$ ${price.toFixed(2).replace(".", ",")} no Pix ou em até 6x sem juros`,
+      category: "moda",
+      idealFor: isFootwear
+        ? "Caminhada, academia, trabalho o dia inteiro em pé e passeios casuais sem cansar os pés"
+        : isSport
+          ? "Treinos na academia, corrida ao ar livre e dias quentes com secagem rápida"
+          : "Renovar o guarda-roupa masculino ou feminino para o dia a dia, trabalho e passeio gastando pouco",
+      highlightTitle: isKit
+        ? "Melhor Custo por Peça no Kit"
+        : isFootwear
+          ? "Campeão em Conforto & Amortecimento"
+          : `Custo-Benefício Moda (${cbScore}/100)`,
+      metrics: {
+        performance: comfortScore,
+        costBenefit: cbScore,
+        battery: durabilityScore,
+        mobility: 96,
+        buildQuality: materialScore,
+      },
+      specs: [
+        {
+          key: "material",
+          label: isFootwear ? "Material e Respirabilidade" : "Tecido e Composição",
+          value: isFootwear
+            ? "Cabedal respirável macio com palmilha anatômica de absorção de impacto"
+            : isSport
+              ? "Malha tecnológica respirável de secagem rápida e toque frio"
+              : "Malha selecionada macia ao toque com ótimo caimento no corpo",
+          score: materialScore,
+          usageNote: isFootwear
+            ? "Mantém os pés ventilados ao longo do dia evitando bolhas e abafamento."
+            : "Tecido agradável na pele que não pinica e mantém o caimento bonito após lavar.",
+        },
+        {
+          key: "comfort",
+          label: isFootwear ? "Amortecimento e Solado" : "Modelagem e Conforto",
+          value: isFootwear
+            ? "Solado leve em EVA/Borracha antiderrapante de alta maciez"
+            : "Corte anatômico brasileiro (P ao GG) que veste bem sem prender movimentos",
+          score: comfortScore,
+          usageNote: isFootwear
+            ? "Ganha na absorção de impacto para quem caminha ou passa horas em pé."
+            : "Excelente liberdade de movimento tanto no uso casual quanto no trabalho.",
+        },
+        {
+          key: "durability",
+          label: "Acabamento e Durabilidade",
+          value: isFootwear
+            ? "Costuras e colagem reforçadas para uso diário intenso"
+            : "Costura reforçada que não esgarça fácil e mantém a cor firme",
+          score: durabilityScore,
+          usageNote: "Projetado para aguentar lavagens e uso frequente toda semana.",
+        },
+        {
+          key: "versatility",
+          label: "Versatilidade de Uso",
+          value: isKit
+            ? "Kit econômico com múltiplas peças fáceis de combinar"
+            : "Combina facilmente com looks casuais, esporte e dia a dia",
+          score: versatilityScore,
+          usageNote: "Peça curinga que resolve o visual rapidamente sem complicação.",
+        },
+        {
+          key: "value",
+          label: "Economia e Custo-Benefício",
+          value: `R$ ${price.toFixed(2).replace(".", ",")} (Nota ${cbScore}/100 em Custo-Benefício)`,
+          score: cbScore,
+          usageNote: "Preço muito abaixo das lojas de shopping pela mesma qualidade de material.",
+        },
+      ],
+      pros: [
+        `Excelente conforto e acabamento (${comfortScore}/100) para uso diário`,
+        `Altíssimo índice de custo-benefício (${cbScore}/100) custando R$ ${price.toFixed(2).replace(".", ",")}`,
+        "Fácil de lavar, seca rápido e tem ótima aprovação de compradores no Brasil",
+      ],
+      cons: [
+        "Confira a tabela de medidas/numeração do anúncio antes de escolher o tamanho",
+      ],
+      aiReasoning: `Produto de Moda & Calçados "${name}" classificado automaticamente na categoria "moda" com 5 critérios comparativos padronizados.`,
+    };
+  }
+
+  // ============================================================================
+  // 5. CASA, MÓVEIS, CORTINAS, COBERTORES, ROUPA DE CAMA & COZINHA
+  // ============================================================================
+  const isHomeFurnitureOrBedding =
+    /\b(movel|moveis|mesa|cabeceira|criado|sapateira|estante|prateleira|nicho|escrivaninha|puff|bau|arara|cabideiro|armario|guardaroupa|guarda-roupa|cortina|blackout|persiana|cobertor|coberta|manta|edredom|lencol|jogo de cama|roupa de cama|fronha|travesseiro|colcha|cobre leito|toalha|tapete|mop|cabide|airfryer|air fryer|fritadeira|liquidificador|chaleira|cafeteira|balanca|aspirador|panela|ventilador|garrafa termica|parafusadeira|furadeira|lampada|cozinha|inox)\b/.test(
+      lowerNorm,
+    );
+
+  if (isHomeFurnitureOrBedding) {
+    const isFurniture =
+      /\b(movel|moveis|mesa|cabeceira|criado|sapateira|estante|prateleira|nicho|escrivaninha|puff|bau|arara|cabideiro|armario|guardaroupa|guarda-roupa)\b/.test(
+        lowerNorm,
+      );
+    const isBeddingOrCurtain =
+      /\b(cortina|blackout|persiana|cobertor|coberta|manta|edredom|lencol|jogo de cama|roupa de cama|fronha|travesseiro|colcha|cobre leito|toalha|tapete)\b/.test(
+        lowerNorm,
+      );
+
+    const price =
+      detectedPrice || (isFurniture ? 69.9 : isBeddingOrCurtain ? 49.9 : 54.9);
+    const originalPrice =
+      resolvedMeta?.detectedOriginalPrice &&
+      resolvedMeta.detectedOriginalPrice > price
+        ? resolvedMeta.detectedOriginalPrice
+        : Math.round(price * 1.45 * 10) / 10;
+
+    const brand =
+      resolvedBrand ||
+      (lowerNorm.includes("mondial")
+        ? "Mondial"
+        : lowerNorm.includes("positivo")
+          ? "Positivo"
+          : lowerNorm.includes("santista")
+            ? "Santista"
+            : lowerNorm.includes("karsten")
+              ? "Karsten"
+              : lowerNorm.includes("tramontina")
+                ? "Tramontina"
+                : isFurniture
+                  ? "Móveis Brasil"
+                  : isBeddingOrCurtain
+                    ? "Casa & Conforto"
+                    : "Casa Seleção");
+
+    const { name, shortName } = formatProductNames(
+      cleanTitle,
+      brand,
+      "Item de Casa, Móveis & Conforto",
+    );
+
+    const buildScore = clampScore(92);
+    const practicalityScore = clampScore(95);
+    const cbScore = clampScore(price <= 70 ? 98 : price <= 130 ? 95 : 91);
+
+    return {
+      name,
+      shortName,
+      brand,
+      image: resolvedImage,
+      tagline: `${name} — praticidade, acabamento resistente e excelente custo-benefício (R$ ${price.toFixed(2).replace(".", ",")}) para renovar sua casa.`,
+      price,
+      originalPrice,
+      installmentText: `Por R$ ${price.toFixed(2).replace(".", ",")} no Pix ou em até 6x sem juros`,
+      category: "casa",
+      idealFor: isFurniture
+        ? "Organizar e decorar quarto, sala ou home office aproveitando cada centímetro de espaço"
+        : isBeddingOrCurtain
+          ? "Deixar o quarto ou a sala mais aconchegante, bonito e confortável gastando pouco"
+          : "Praticidade diária na cozinha e em casa com alta durabilidade",
+      highlightTitle: isFurniture
+        ? "Móvel Funcional de Alto Custo-Benefício"
+        : isBeddingOrCurtain
+          ? "Campeão de Conforto para Casa & Quarto"
+          : `Destaque Casa & Cozinha (${cbScore}/100)`,
+      metrics: {
+        performance: practicalityScore,
+        costBenefit: cbScore,
+        battery: 92,
+        mobility: 90,
+        buildQuality: buildScore,
+      },
+      specs: [
+        {
+          key: "material",
+          label: isFurniture
+            ? "Estrutura e Acabamento"
+            : isBeddingOrCurtain
+              ? "Tecido, Toque e Gramatura"
+              : "Material e Construção",
+          value: isFurniture
+            ? "Estrutura firme em MDP/MDF ou aço com acabamento resistente à umidade"
+            : isBeddingOrCurtain
+              ? "Tecido macio de excelente caimento, antialérgico e costura reforçada"
+              : "Acabamento de alta durabilidade dimensionado para uso diário",
+          score: buildScore,
+          usageNote: isFurniture
+            ? "Fácil de montar em casa e suporta o peso de uso diário com estabilidade."
+            : isBeddingOrCurtain
+              ? "Toque agradável, fácil de lavar na máquina e seca rapidamente."
+              : "Resistente ao uso contínuo e muito fácil de higienizar.",
+        },
+        {
+          key: "practicality",
+          label: "Funcionalidade no Dia a Dia",
+          value: isFurniture
+            ? "Otimiza o espaço do ambiente e mantém tudo organizado à mão"
+            : isBeddingOrCurtain
+              ? "Conforto térmico e visual moderno imediato para o ambiente"
+              : "Operação prática e rápida que economiza tempo na rotina",
+          score: practicalityScore,
+          usageNote: "Resolve uma necessidade real da casa logo no primeiro dia de uso.",
+        },
+        {
+          key: "dimensions",
+          label: "Medidas e Compatibilidade",
+          value: "Dimensionado no padrão brasileiro para quartos, salas e cozinhas",
+          score: 92,
+          usageNote: "Encaixa perfeitamente mesmo em apartamentos ou espaços compactos.",
+        },
+        {
+          key: "value",
+          label: "Economia e Custo-Benefício",
+          value: `R$ ${price.toFixed(2).replace(".", ",")} (Nota ${cbScore}/100 em Custo-Benefício)`,
+          score: cbScore,
+          usageNote: "Excelente retorno por cada real investido em comparação a lojas físicas.",
+        },
+      ],
+      pros: [
+        `Ótima qualidade de material e acabamento (${buildScore}/100)`,
+        `Excelente custo-benefício (${cbScore}/100) na faixa de R$ ${price.toFixed(2).replace(".", ",")}`,
+        "Alta aprovação de compradores pela praticidade e facilidade de uso/limpeza",
+      ],
+      cons: [
+        "Verifique as medidas exatas do espaço antes da instalação/uso",
+      ],
+      aiReasoning: `Produto de Casa, Móveis & Cama "${name}" classificado automaticamente na categoria "casa" com especificações comparativas padronizadas.`,
+    };
+  }
+
+  // ============================================================================
+  // 6. MONITORES, CADEIRAS, SMARTWATCHES, GAMES & PERIFÉRICOS EM GERAL
   // ============================================================================
   const isMonitor =
     lower.includes("monitor") ||
@@ -1565,14 +1853,6 @@ export function heuristicAnalyzeProductInput(
     lower.includes("apple watch");
 
   const isAppliance =
-    lower.includes("airfryer") ||
-    lower.includes("air fryer") ||
-    lower.includes("fritadeira") ||
-    lower.includes("cafeteira") ||
-    lower.includes("aspirador") ||
-    lower.includes("liquidificador") ||
-    lower.includes("panela") ||
-    lower.includes("ventilador") ||
     lower.includes("ar condicionado") ||
     lower.includes("micro-ondas") ||
     lower.includes("microondas");

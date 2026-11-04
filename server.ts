@@ -494,19 +494,20 @@ ${effectivePrice ? `Preço informado/detectado: R$ ${effectivePrice}` : "Se o pr
       return;
     }
 
-    const { maxPrice, categoryFilter, query } = req.body as {
+    const { maxPrice, categoryFilter, query, forceRefresh } = req.body as {
       maxPrice?: number;
       categoryFilter?: MinerCategoryFilter;
       query?: string;
+      forceRefresh?: boolean;
     };
 
     const safeMaxPrice = Math.max(
       15,
-      Math.min(5000, Number(maxPrice) || 100),
+      Math.min(5000, Number(maxPrice) || 150),
     );
     const safeCategory: MinerCategoryFilter =
       categoryFilter &&
-      ["all", "audio", "perifericos", "casa", "acessorios"].includes(
+      ["all", "audio", "perifericos", "casa", "moda", "acessorios"].includes(
         categoryFilter,
       )
         ? categoryFilter
@@ -519,6 +520,7 @@ ${effectivePrice ? `Preço informado/detectado: R$ ${effectivePrice}` : "Se o pr
         maxPrice: safeMaxPrice,
         categoryFilter: safeCategory,
         query: safeQuery,
+        forceRefresh: Boolean(forceRefresh),
       });
       res.json(result);
     } catch {
